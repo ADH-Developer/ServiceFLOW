@@ -8,7 +8,7 @@ export const registerSchema = z.object({
         password: z.string().min(6, 'Password must be at least 6 characters')
     }),
     phone: z.string().min(1, 'Phone number is required'),
-    preferred_contact: z.enum(['email', 'phone'])
+    preferred_contact: z.enum(['email', 'phone', 'both'])
 });
 
 export type RegisterInput = z.infer<typeof registerSchema>; 

@@ -81,7 +81,7 @@ export const RegisterForm = () => {
                 isClosable: true,
             });
 
-            router.push('/login'); // Redirect to login page after successful registration
+            router.push('/register/vehicle');
         } catch (error) {
             toast({
                 title: 'Error',
@@ -98,7 +98,7 @@ export const RegisterForm = () => {
     return (
         <Box p={8} maxWidth="500px" borderWidth={1} borderRadius="lg">
             <VStack spacing={4} as="form" onSubmit={handleSubmit}>
-                <Heading size="lg">Create Account</Heading>
+                <Heading size="md">Create Account</Heading>
 
                 <FormControl isInvalid={!!errors['user.first_name']}>
                     <FormLabel>First Name</FormLabel>
@@ -169,11 +169,12 @@ export const RegisterForm = () => {
                         value={formData.preferred_contact}
                         onChange={(e) => setFormData({
                             ...formData,
-                            preferred_contact: e.target.value as 'email' | 'phone'
+                            preferred_contact: e.target.value as 'email' | 'phone' | 'both'
                         })}
                     >
                         <option value="email">Email</option>
                         <option value="phone">Phone</option>
+                        <option value="both">Both</option>
                     </Select>
                 </FormControl>
 

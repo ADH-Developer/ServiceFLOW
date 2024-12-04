@@ -16,7 +16,9 @@ class CustomerProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     phone = models.CharField(max_length=20)
     preferred_contact = models.CharField(
-        max_length=10, choices=[("email", "Email"), ("phone", "Phone")], default="email"
+        max_length=10,
+        choices=[("email", "Email"), ("phone", "Phone"), ("both", "Both")],
+        default="phone",
     )
     vehicles = models.ManyToManyField(Vehicle)
 
