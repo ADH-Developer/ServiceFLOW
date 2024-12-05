@@ -12,11 +12,8 @@ services:
       - "8000:8000"
     volumes:
       - ./server:/src
-      - run_vol:/var/run
-      - cache_vol:/var/cache
-      - tmp_vol:/tmp
     env_file:
-      - .env.dev
+      - .env.prod
     environment:
       - DJANGO_DEBUG=False
       - GUNICORN_WORKERS=5
@@ -24,6 +21,11 @@ services:
       sh -c "sh migrations.sh && gunicorn -w 5 --reload -b 0.0.0.0:8000 --log-level info server.wsgi"
     depends_on:
       - db
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   client:
     container_name: client
@@ -40,14 +42,22 @@ services:
     depends_on:
       - server
       - db
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:3000" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   db:
     container_name: db
     image: postgres
     env_file:
-      - .env.dev
+      - .env.prod
+    volumes:
+      - db_data:/var/lib/postgresql/data
 
 volumes:
+  db_data:
   run_vol:
     driver_opts:
       type: tmpfs

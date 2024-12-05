@@ -16,12 +16,22 @@ const SchedulePage = () => {
                 throw new Error('No service registration data found');
             }
 
+            // Format the date as YYYY-MM-DD
+            const formattedDate = format(appointmentData.date, 'yyyy-MM-dd');
+
             // Combine stored data with appointment data
             const registrationData = {
                 ...JSON.parse(storedData),
-                appointment_date: format(appointmentData.date, 'yyyy-MM-dd'),
+                appointment_date: formattedDate,
                 appointment_time: appointmentData.timeSlot,
             };
+
+            console.log('Final registration data:', {
+                date: registrationData.appointment_date,
+                time: registrationData.appointment_time,
+                vehicle: registrationData.vehicle,
+                services: registrationData.services
+            });
 
             console.log('Submitting service request:', registrationData);
 
@@ -35,9 +45,13 @@ const SchedulePage = () => {
         } catch (error: any) {
             console.error('Submission error:', error);
 
+            const errorMessage = Array.isArray(error.response?.data)
+                ? error.response.data[0]
+                : error.response?.data?.message || error.message;
+
             toast({
                 title: 'Error saving appointment',
-                description: error.response?.data?.message || error.message,
+                description: errorMessage,
                 status: 'error',
                 duration: 5000,
                 isClosable: true,

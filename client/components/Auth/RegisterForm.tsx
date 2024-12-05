@@ -49,8 +49,16 @@ export const RegisterForm = () => {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        setIsLoading(true);
+        setErrors({});
 
         try {
+            // Validate form data first
+            if (!validateForm()) {
+                setIsLoading(false);
+                return;
+            }
+
             const response = await customersApi.register(formData);
 
             // If registration is successful, redirect to the next step
@@ -60,10 +68,25 @@ export const RegisterForm = () => {
         } catch (error) {
             // Handle registration errors
             if (axios.isAxiosError(error) && error.response) {
-                setErrors(error.response.data);
+                // Check for email exists error from backend
+                if (error.response.data?.user?.email?.[0]?.includes('already exists')) {
+                    setErrors({
+                        'user.email': 'An account with this email already exists'
+                    });
+                } else {
+                    setErrors(error.response.data);
+                }
             } else {
-                setErrors({ general: 'An unexpected error occurred' });
+                toast({
+                    title: 'Registration Error',
+                    description: 'An unexpected error occurred during registration',
+                    status: 'error',
+                    duration: 5000,
+                    isClosable: true,
+                });
             }
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -100,6 +123,7 @@ export const RegisterForm = () => {
                     <FormLabel>Email</FormLabel>
                     <Input
                         type="email"
+                        required
                         value={formData.user.email}
                         onChange={(e) => setFormData({
                             ...formData,
@@ -113,6 +137,8 @@ export const RegisterForm = () => {
                     <FormLabel>Password</FormLabel>
                     <Input
                         type="password"
+                        required
+                        minLength={6}
                         value={formData.user.password}
                         onChange={(e) => setFormData({
                             ...formData,
@@ -156,7 +182,6 @@ export const RegisterForm = () => {
                     isLoading={isLoading}
                     type="submit"
                     width="full"
-                    onClick={handleSubmit}
                 >
                     Register
                 </Button>

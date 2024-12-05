@@ -344,7 +344,6 @@ export const VehicleServiceForm = ({ onSubmit }: VehicleServiceFormProps) => {
                     type="submit"
                     colorScheme="primary"
                     width="full"
-                    onClick={onSubmit}
                 >
                     Next
                 </Button>

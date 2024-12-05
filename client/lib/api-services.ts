@@ -8,11 +8,16 @@ export const serviceRequestsApi = {
         appointment_time: string;
     }) => {
         try {
-            // Format the date to YYYY-MM-DD
-            const appointmentDate = new Date(data.appointment_date);
-            const formattedDate = appointmentDate.toISOString().split('T')[0];
+            const token = localStorage.getItem('authToken');
+            if (!token) {
+                throw new Error('Authentication required');
+            }
 
-            // Format the data to match the backend expectations
+            if (token === 'undefined' || token === 'null') {
+                localStorage.removeItem('authToken');
+                throw new Error('Invalid authentication token');
+            }
+
             const formattedData = {
                 vehicle: {
                     make: data.vehicle.make,
@@ -24,15 +29,11 @@ export const serviceRequestsApi = {
                     description: service.description,
                     urgency: service.urgency.toLowerCase()
                 })),
-                appointment_date: formattedDate,
+                appointment_date: data.appointment_date,
                 appointment_time: data.appointment_time
             };
 
-            console.log('Sending service request data:', JSON.stringify(formattedData, null, 2));
-
-            const token = localStorage.getItem('authToken');
-            console.log('Auth token:', token ? 'Present' : 'Missing');
-
+            console.log('Token being sent:', token);
             const response = await apiClient.post('/api/customers/service-requests/', formattedData);
             return response.data;
         } catch (error: any) {
@@ -40,7 +41,7 @@ export const serviceRequestsApi = {
                 message: error.message,
                 response: error.response?.data,
                 status: error.response?.status,
-                headers: error.response?.headers
+                token: localStorage.getItem('authToken')
             });
             throw error;
         }

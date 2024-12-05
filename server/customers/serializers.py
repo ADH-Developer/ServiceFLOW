@@ -148,13 +148,12 @@ class ServiceRequestSerializer(serializers.ModelSerializer):
             vehicle, _ = Vehicle.objects.get_or_create(**vehicle_data)
 
             # Get customer from context
-            customer = self.context.get("customer")
-            if not customer:
-                raise serializers.ValidationError("Customer is required")
+            customer = self.context["request"].user.customerprofile
 
-            # Create service request
+            # Create service request without explicitly passing customer
             service_request = ServiceRequest.objects.create(
-                vehicle=vehicle, customer=customer, **validated_data
+                vehicle=vehicle,
+                **validated_data,  # customer will be set by perform_create in the viewset
             )
 
             # Create service items

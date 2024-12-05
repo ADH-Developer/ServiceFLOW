@@ -12,14 +12,13 @@ const VehicleServicePage = () => {
     const handleSubmit = async (data: ServiceRequest) => {
         try {
             // Store data in localStorage for now
-            // In production, you might want to use a more robust state management solution like Redux
             localStorage.setItem('serviceRegistration', JSON.stringify({
                 vehicle: data.vehicle,
                 services: data.services
             }));
 
             // Navigate to scheduling page
-            router.push('/register/schedule');
+            await router.push('/register/schedule');
         } catch (error) {
             toast({
                 title: 'Error saving service information',
