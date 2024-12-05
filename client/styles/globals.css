@@ -9,3 +9,28 @@ body {
 * {
   box-sizing: border-box;
 }
+
+.custom-datepicker-wrapper .react-datepicker {
+  font-family: inherit;
+  border: none;
+  background: transparent;
+}
+
+.custom-datepicker-wrapper .react-datepicker__header {
+  background: transparent;
+  border: none;
+}
+
+.custom-datepicker-wrapper .react-datepicker__day--selected {
+  background-color: var(--chakra-colors-primary-500);
+  border-radius: 50%;
+}
+
+.custom-datepicker-wrapper .react-datepicker__day:hover {
+  background-color: var(--chakra-colors-primary-100);
+  border-radius: 50%;
+}
+
+.custom-datepicker-wrapper .react-datepicker__day--disabled {
+  color: var(--chakra-colors-gray-300);
+}

@@ -1,9 +1,12 @@
+from datetime import datetime
+
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from rest_framework import serializers
+from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import CustomerProfile, Vehicle
+from .models import CustomerProfile, ServiceItem, ServiceRequest, Vehicle
 
 
 class VehicleSerializer(serializers.ModelSerializer):
@@ -15,17 +18,22 @@ class VehicleSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["id", "first_name", "last_name", "email", "password"]
-        extra_kwargs = {"password": {"write_only": True}, "id": {"read_only": True}}
+        fields = ["first_name", "last_name", "email", "password"]
+        extra_kwargs = {"password": {"write_only": True}, "email": {"required": True}}
 
 
 class CustomerProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer()
     vehicles = VehicleSerializer(many=True, required=False)
+    token = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomerProfile
-        fields = ["user", "phone", "preferred_contact", "vehicles"]
+        fields = ["user", "phone", "preferred_contact", "vehicles", "token"]
+
+    def get_token(self, obj):
+        refresh = RefreshToken.for_user(obj.user)
+        return str(refresh.access_token)
 
     def create(self, validated_data):
         user_data = validated_data.pop("user")
@@ -79,3 +87,83 @@ class CustomerProfileSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"phone": "Phone number is required"})
 
         return data
+
+
+class ServiceItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ServiceItem
+        fields = ["service_type", "description", "urgency"]
+
+
+class ServiceRequestSerializer(serializers.ModelSerializer):
+    services = ServiceItemSerializer(many=True)
+    vehicle = VehicleSerializer()
+
+    class Meta:
+        model = ServiceRequest
+        fields = [
+            "id",
+            "vehicle",
+            "services",
+            "appointment_date",
+            "appointment_time",
+            "status",
+            "created_at",
+        ]
+        read_only_fields = ["id", "status", "created_at"]
+
+    def validate_vehicle(self, value):
+        if not all(k in value for k in ("make", "model", "year")):
+            raise serializers.ValidationError(
+                "Vehicle must include make, model, and year"
+            )
+        try:
+            value["year"] = int(value["year"])
+        except (ValueError, TypeError):
+            raise serializers.ValidationError("Year must be a valid number")
+        return value
+
+    def validate_services(self, value):
+        if not value:
+            raise serializers.ValidationError("At least one service is required")
+        for service in value:
+            if not all(
+                k in service for k in ("service_type", "description", "urgency")
+            ):
+                raise serializers.ValidationError(
+                    "Each service must include service_type, description, and urgency"
+                )
+            if service["urgency"] not in ("low", "medium", "high"):
+                raise serializers.ValidationError(
+                    "Service urgency must be 'low', 'medium', or 'high'"
+                )
+        return value
+
+    def create(self, validated_data):
+        try:
+            vehicle_data = validated_data.pop("vehicle")
+            services_data = validated_data.pop("services")
+
+            # Get or create vehicle
+            vehicle, _ = Vehicle.objects.get_or_create(**vehicle_data)
+
+            # Get customer from context
+            customer = self.context.get("customer")
+            if not customer:
+                raise serializers.ValidationError("Customer is required")
+
+            # Create service request
+            service_request = ServiceRequest.objects.create(
+                vehicle=vehicle, customer=customer, **validated_data
+            )
+
+            # Create service items
+            for service_data in services_data:
+                ServiceItem.objects.create(
+                    service_request=service_request, **service_data
+                )
+
+            return service_request
+        except Exception as e:
+            print(f"Error in create method: {str(e)}")
+            raise serializers.ValidationError(str(e))

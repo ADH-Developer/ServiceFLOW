@@ -12,15 +12,15 @@ import {
     Heading,
     FormErrorMessage
 } from '@chakra-ui/react';
-import { registerSchema } from '../../lib/validations/auth';
+import { registerSchema, type RegisterInput } from '../../lib/validations/auth';
+import { customersApi } from '../../lib/api-services';
+import axios from 'axios';
 
 export const RegisterForm = () => {
-    const toast = useToast();
     const router = useRouter();
+    const toast = useToast();
     const [isLoading, setIsLoading] = useState(false);
-    const [errors, setErrors] = useState<Record<string, string>>({});
-
-    const [formData, setFormData] = useState({
+    const [formData, setFormData] = useState<RegisterInput>({
         user: {
             first_name: '',
             last_name: '',
@@ -28,23 +28,21 @@ export const RegisterForm = () => {
             password: ''
         },
         phone: '',
-        preferred_contact: 'email' as const
+        preferred_contact: 'email'
     });
+    const [errors, setErrors] = useState<Record<string, string>>({});
 
     const validateForm = () => {
         try {
             registerSchema.parse(formData);
             setErrors({});
             return true;
-        } catch (error) {
-            if (error.errors) {
-                const newErrors: Record<string, string> = {};
-                error.errors.forEach((err: any) => {
-                    const path = err.path.join('.');
-                    newErrors[path] = err.message;
-                });
-                setErrors(newErrors);
-            }
+        } catch (error: any) {
+            const formattedErrors: Record<string, string> = {};
+            error.errors.forEach((err: any) => {
+                formattedErrors[err.path.join('.')] = err.message;
+            });
+            setErrors(formattedErrors);
             return false;
         }
     };
@@ -52,46 +50,20 @@ export const RegisterForm = () => {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
-        if (!validateForm()) {
-            return;
-        }
-
-        setIsLoading(true);
-
         try {
-            const response = await fetch('http://localhost:8000/api/customers/register/', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(formData),
-            });
+            const response = await customersApi.register(formData);
 
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(data.message || 'Registration failed');
+            // If registration is successful, redirect to the next step
+            if (response.token) {
+                router.push('/register/vehicle-service');
             }
-
-            toast({
-                title: 'Account created.',
-                description: "We've created your account for you.",
-                status: 'success',
-                duration: 5000,
-                isClosable: true,
-            });
-
-            router.push('/register/vehicle');
         } catch (error) {
-            toast({
-                title: 'Error',
-                description: error.message || 'Unable to create account.',
-                status: 'error',
-                duration: 5000,
-                isClosable: true,
-            });
-        } finally {
-            setIsLoading(false);
+            // Handle registration errors
+            if (axios.isAxiosError(error) && error.response) {
+                setErrors(error.response.data);
+            } else {
+                setErrors({ general: 'An unexpected error occurred' });
+            }
         }
     };
 
@@ -179,12 +151,14 @@ export const RegisterForm = () => {
                 </FormControl>
 
                 <Button
-                    type="submit"
+                    mt={4}
                     colorScheme="primary"
-                    width="full"
                     isLoading={isLoading}
+                    type="submit"
+                    width="full"
+                    onClick={handleSubmit}
                 >
-                    Create Account
+                    Register
                 </Button>
             </VStack>
         </Box>
