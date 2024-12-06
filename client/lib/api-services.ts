@@ -75,5 +75,34 @@ export const customersApi = {
             console.error('Registration error:', error);
             throw error;
         }
+    },
+
+    login: async (credentials: { email: string; password: string }) => {
+        try {
+            console.log('Attempting login with:', { email: credentials.email });
+            const response = await apiClient.post('/api/customers/login/', credentials);
+
+            console.log('Login response:', response.data);
+
+            // The token is nested inside response.data.data.token
+            if (response.data?.data?.token) {
+                localStorage.setItem('authToken', response.data.data.token);
+                return {
+                    ...response.data.data,
+                    token: response.data.data.token
+                };
+            } else {
+                console.error('No token received in login response');
+                throw new Error('Invalid response from server');
+            }
+
+        } catch (error: any) {
+            console.error('Login error:', {
+                message: error.message,
+                response: error.response?.data,
+                status: error.response?.status
+            });
+            throw error;
+        }
     }
 };
