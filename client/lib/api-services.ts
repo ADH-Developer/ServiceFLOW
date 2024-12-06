@@ -1,6 +1,7 @@
 import apiClient from './api-client';
 import type { ServiceRequest } from '../types/service-request';
 import type { RegisterInput } from './validations/auth';
+import { format } from 'date-fns-tz'
 
 export const serviceRequestsApi = {
     create: async (data: ServiceRequest & {
@@ -18,6 +19,20 @@ export const serviceRequestsApi = {
                 throw new Error('Invalid authentication token');
             }
 
+            const [timeStr, period] = data.appointment_time.split(' ');
+            const [hours, minutes] = timeStr.split(':').map(Number);
+            let hour24 = hours;
+
+            if (period.toUpperCase() === 'PM' && hours !== 12) {
+                hour24 += 12;
+            } else if (period.toUpperCase() === 'AM' && hours === 12) {
+                hour24 = 0;
+            }
+
+            const formattedTime = `${hour24.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+
+            console.log('Formatted time for backend:', formattedTime);
+
             const formattedData = {
                 vehicle: {
                     make: data.vehicle.make,
@@ -30,10 +45,14 @@ export const serviceRequestsApi = {
                     urgency: service.urgency.toLowerCase()
                 })),
                 appointment_date: data.appointment_date,
-                appointment_time: data.appointment_time
+                appointment_time: formattedTime
             };
 
-            console.log('Token being sent:', token);
+            console.log('Sending appointment data:', {
+                date: formattedData.appointment_date,
+                time: formattedData.appointment_time
+            });
+
             const response = await apiClient.post('/api/customers/service-requests/', formattedData);
             return response.data;
         } catch (error: any) {

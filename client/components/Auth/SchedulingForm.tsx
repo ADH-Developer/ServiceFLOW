@@ -94,45 +94,51 @@ export const SchedulingForm = ({ onSubmit }: SchedulingFormProps) => {
     const getAvailableTimeSlots = (hour: string) => {
         if (!selectedDate) return [];
 
+        // Shop timezone
+        const shopTimeZone = 'America/New_York';
+
         // Parse the selected hour
         const [time, period] = hour.split(' ');
         const [hourStr] = time.split(':');
         let selectedHourNum = parseInt(hourStr);
 
-        // Convert to 24-hour format
+        // Convert to 24-hour format for internal use
         if (period === 'PM' && selectedHourNum !== 12) {
             selectedHourNum += 12;
         } else if (period === 'AM' && selectedHourNum === 12) {
             selectedHourNum = 0;
         }
 
-        const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        const currentDate = createCleanDate(new Date());
         const slots = [];
+        const currentDate = new Date();
+        const shopCurrentTime = utcToZonedTime(currentDate, shopTimeZone);
 
         // If it's today and the selected hour is the current hour
-        if (isSameDay(selectedDate, currentDate) && selectedHourNum === currentDate.getHours()) {
-            const currentMinute = currentDate.getMinutes();
-            // Round up to next 10 minutes + buffer
+        if (
+            isSameDay(selectedDate, shopCurrentTime) &&
+            selectedHourNum === shopCurrentTime.getHours()
+        ) {
+            const currentMinute = shopCurrentTime.getMinutes();
             const startMinute = Math.ceil((currentMinute + 15) / 10) * 10;
 
             for (let minute = startMinute; minute < 60; minute += 10) {
-                const slotTime = createCleanDate(new Date(selectedDate));
+                const slotTime = new Date(selectedDate);
                 slotTime.setHours(selectedHourNum, minute, 0, 0);
 
-                // Convert to UTC for comparison
-                const utcSlotTime = zonedTimeToUtc(slotTime, timeZone);
-                const utcCurrentTime = zonedTimeToUtc(currentDate, timeZone);
+                const utcSlotTime = zonedTimeToUtc(slotTime, shopTimeZone);
+                const utcCurrentTime = zonedTimeToUtc(currentDate, shopTimeZone);
 
                 if (isAfter(utcSlotTime, addMinutes(utcCurrentTime, 10))) {
+                    // Format in 12-hour format
                     slots.push(format(slotTime, 'h:mm a'));
                 }
             }
         } else {
             // For future hours/days
             for (let minute = 0; minute < 60; minute += 10) {
-                const slotTime = createCleanDate(new Date(selectedDate));
+                const slotTime = new Date(selectedDate);
                 slotTime.setHours(selectedHourNum, minute, 0, 0);
+                // Format in 12-hour format
                 slots.push(format(slotTime, 'h:mm a'));
             }
         }
@@ -153,6 +159,47 @@ export const SchedulingForm = ({ onSubmit }: SchedulingFormProps) => {
 
     const formatDateForDisplay = (date: Date) => {
         return format(date, 'EEEE, MMMM d, yyyy');
+    };
+
+    const handleSubmit = async () => {
+        if (selectedDate && selectedTimeSlot) {
+            const shopTimeZone = 'America/New_York';
+
+            // Parse the time slot
+            const [timeStr, period] = selectedTimeSlot.split(' ');
+            const [hours, minutes] = timeStr.split(':').map(Number);
+
+            // Create a new date object for the selected date
+            const appointmentDate = new Date(selectedDate);
+
+            // Set the time on the appointment date
+            let hour24 = hours;
+            if (period.toUpperCase() === 'PM' && hours !== 12) {
+                hour24 += 12;
+            } else if (period.toUpperCase() === 'AM' && hours === 12) {
+                hour24 = 0;
+            }
+
+            appointmentDate.setHours(hour24, minutes, 0, 0);
+
+            setIsLoading(true);
+            setError(null);
+
+            try {
+                await onSubmit({
+                    date: appointmentDate,
+                    timeSlot: selectedTimeSlot
+                });
+            } catch (err: any) {
+                const errorMessage = err.response?.data?.[0] ||
+                    err.response?.data?.message ||
+                    err.message ||
+                    'Failed to schedule appointment';
+                setError(errorMessage);
+            } finally {
+                setIsLoading(false);
+            }
+        }
     };
 
     return (
@@ -267,51 +314,7 @@ export const SchedulingForm = ({ onSubmit }: SchedulingFormProps) => {
                         width="full"
                         isLoading={isLoading}
                         loadingText="Confirming appointment..."
-                        onClick={async () => {
-                            if (selectedDate && selectedTimeSlot) {
-                                const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-                                const [timeStr, period] = selectedTimeSlot.split(' ');
-                                const [hours, minutes] = timeStr.split(':').map(Number);
-                                let selectedHour = hours;
-
-                                if (period === 'PM' && selectedHour !== 12) {
-                                    selectedHour += 12;
-                                } else if (period === 'AM' && selectedHour === 12) {
-                                    selectedHour = 0;
-                                }
-
-                                const selectedDateTime = createCleanDate(new Date(selectedDate));
-                                selectedDateTime.setHours(selectedHour, minutes, 0, 0);
-
-                                const currentTime = createCleanDate(new Date());
-
-                                // Convert both times to UTC for comparison
-                                const utcSelectedTime = zonedTimeToUtc(selectedDateTime, timeZone);
-                                const utcCurrentTime = zonedTimeToUtc(currentTime, timeZone);
-
-                                if (utcSelectedTime <= addMinutes(utcCurrentTime, 10)) {
-                                    setError('Please select a time at least 10 minutes in the future');
-                                    return;
-                                }
-
-                                setIsLoading(true);
-                                setError(null);
-                                try {
-                                    await onSubmit({
-                                        date: selectedDate,
-                                        timeSlot: selectedTimeSlot // This will be in "h:mm a" format
-                                    });
-                                } catch (err: any) {
-                                    const errorMessage = err.response?.data?.[0] ||
-                                        err.response?.data?.message ||
-                                        err.message ||
-                                        'Failed to schedule appointment';
-                                    setError(errorMessage);
-                                } finally {
-                                    setIsLoading(false);
-                                }
-                            }
-                        }}
+                        onClick={handleSubmit}
                         isDisabled={!selectedDate || !selectedTimeSlot || isLoading}
                     >
                         Confirm Appointment

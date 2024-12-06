@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta
+import zoneinfo
+from datetime import datetime, time, timedelta
 
 from django.contrib.auth import authenticate
 from django.utils import timezone
@@ -74,62 +75,62 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
     def validate_appointment_time(self, date_str, time_str):
         """Validate that the appointment time is valid and available"""
         try:
-            # Parse the date and time
+            # Debug logging
+            print(f"Validating appointment - Date: {date_str}, Time: {time_str}")
+
+            # Parse the incoming time (24-hour format HH:mm)
+            hour, minute = map(int, time_str.split(":"))
+
+            # Get shop's timezone (EST)
+            shop_tz = zoneinfo.ZoneInfo("America/New_York")
+
+            # Get current time in shop's timezone
+            now = timezone.now().astimezone(shop_tz)
+            print(f"Current time in shop timezone: {now}")
+
+            # Create appointment datetime in shop's timezone
             appointment_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-            appointment_time = datetime.strptime(time_str, "%I:%M %p").time()
-            appointment_datetime = timezone.make_aware(
-                datetime.combine(appointment_date, appointment_time)
+            print(f"Appointment date: {appointment_date}")
+            print(f"Current date in shop timezone: {now.date()}")
+
+            # Explicitly check if this is a future date
+            is_future_date = appointment_date > now.date()
+            print(f"Is future date: {is_future_date}")
+
+            # Create the full appointment datetime
+            appointment_datetime = datetime.combine(
+                appointment_date, time(hour, minute)
             )
+            appointment_datetime = timezone.make_aware(appointment_datetime, shop_tz)
+            print(f"Full appointment datetime: {appointment_datetime}")
 
-            # Validate basic rules
-            now = timezone.now()
-            max_date = now + timedelta(days=30)
+            # Only apply 10-minute buffer for same-day appointments
+            if not is_future_date:
+                min_appointment_time = now + timedelta(minutes=10)
+                print(f"Minimum appointment time: {min_appointment_time}")
+                if appointment_datetime < min_appointment_time:
+                    raise ValidationError(
+                        "Same-day appointments must be at least 10 minutes in the future"
+                    )
 
-            # For same-day appointments, ensure we're at least 10 minutes in the future
-            min_appointment_time = now + timedelta(minutes=10)
-            if appointment_datetime < min_appointment_time:
-                raise ValidationError(
-                    "Appointments must be at least 10 minutes in the future"
-                )
+            # Business hours check (9 AM - 4 PM EST)
+            if appointment_datetime.hour < 9 or appointment_datetime.hour >= 16:
+                raise ValidationError("Appointments must be between 9 AM and 4 PM EST")
 
-            if appointment_datetime.date() > max_date.date():
-                raise ValidationError(
-                    "Cannot schedule appointments more than 30 days in advance"
-                )
-
-            # Validate business hours (9 AM - 4 PM)
-            hour = appointment_datetime.hour
-            if (
-                hour < 9
-                or hour > 16
-                or (hour == 16 and appointment_datetime.minute > 0)
-            ):
-                raise ValidationError("Appointments must be between 9 AM and 4 PM")
-
-            # Validate 10-minute intervals
+            # 10-minute interval check
             if appointment_datetime.minute % 10 != 0:
                 raise ValidationError(
                     "Appointments must be scheduled in 10-minute intervals"
                 )
 
-            # Check for lunch hour (12 PM - 1 PM)
-            if hour == 12:
-                raise ValidationError(
-                    "No appointments available during lunch hour (12 PM - 1 PM)"
-                )
+            return appointment_datetime
 
-            # Check for existing appointments
-            existing_appointment = ServiceRequest.objects.filter(
-                appointment_date=appointment_date, appointment_time=time_str
-            ).exists()
-
-            if existing_appointment:
-                raise ValidationError("This time slot is already booked")
-
-            return True
-
-        except ValueError:
-            raise ValidationError("Invalid date or time format")
+        except ValueError as e:
+            print(f"Validation error: {str(e)}")
+            raise ValidationError(f"Invalid date or time format: {str(e)}")
+        except Exception as e:
+            print(f"Unexpected error: {str(e)}")
+            raise ValidationError(str(e))
 
     def create(self, request, *args, **kwargs):
         try:
@@ -179,7 +180,6 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"])
     def available_slots(self, request):
-        """Return available time slots for a given date"""
         date_str = request.query_params.get("date")
         if not date_str:
             return Response(
@@ -190,7 +190,11 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
         try:
             # Parse the requested date
             requested_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-            current_datetime = timezone.now()
+            shop_tz = zoneinfo.ZoneInfo("America/New_York")
+            current_datetime = timezone.now().astimezone(shop_tz)
+
+            # Check if requested date is today or future
+            is_next_day = requested_date > current_datetime.date()
 
             # Generate base time slots
             time_slots = []
@@ -198,12 +202,11 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
                 if hour == 12:  # Skip lunch hour
                     continue
                 for minute in range(0, 60, 10):
-                    slot_time = timezone.make_aware(
-                        datetime.combine(requested_date, time(hour, minute))
-                    )
+                    slot_time = datetime.combine(requested_date, time(hour, minute))
+                    slot_time = timezone.make_aware(slot_time, shop_tz)
 
-                    # Skip slots in the past for today
-                    if requested_date == current_datetime.date():
+                    # Only apply the 10-minute buffer for today's appointments
+                    if not is_next_day:
                         if slot_time <= current_datetime + timedelta(minutes=10):
                             continue
 
