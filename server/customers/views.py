@@ -140,7 +140,8 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
 
             # Validate customer profile exists
             try:
-                customer_profile = request.user.customerprofile
+                # Check if customer profile exists without assigning it
+                request.user.customerprofile
             except CustomerProfile.DoesNotExist:
                 return Response(
                     {"detail": "Customer profile not found"},
