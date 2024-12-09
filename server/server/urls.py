@@ -52,4 +52,5 @@ urlpatterns = [
     path("api/customers/", include("customers.urls")),
     url(r"^auth/", include("djoser.urls")),
     url(r"^auth/", include("djoser.urls.jwt")),
+    path("api/admin/", include("admin_dashboard.urls")),
 ]

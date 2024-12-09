@@ -14,54 +14,83 @@ import {
     FormErrorMessage,
 } from '@chakra-ui/react';
 import Link from 'next/link';
-import { customersApi } from '../lib/api-services';
+import { authService } from '../lib/auth-service';
 
-type FormProps = {
-    onSubmit: (e: React.FormEvent) => void;
-    children: React.ReactNode;
-};
+interface FormData {
+    email: string;
+    password: string;
+}
+
+interface FormErrors {
+    email?: string;
+    password?: string;
+    auth?: string;
+}
 
 const LoginPage = () => {
     const router = useRouter();
     const toast = useToast();
     const [isLoading, setIsLoading] = useState(false);
-    const [formData, setFormData] = useState({
+    const [formData, setFormData] = useState<FormData>({
         email: '',
         password: '',
     });
-    const [errors, setErrors] = useState<Record<string, string>>({});
+    const [errors, setErrors] = useState<FormErrors>({});
 
-    const handleSubmit = async (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setIsLoading(true);
         setErrors({});
 
         try {
-            console.log('Submitting login form...');
-            const response = await customersApi.login(formData);
-
-            console.log('Login response received:', response);
-
-            if (response?.token) {
-                toast({
-                    title: 'Login successful',
-                    status: 'success',
-                    duration: 2000,
-                    isClosable: true,
-                });
-
-                // Small delay to show success message
-                setTimeout(() => {
-                    router.push('/dashboard');
-                }, 500);
-            } else {
-                throw new Error('No token received');
+            // Validate inputs
+            if (!formData.email) {
+                setErrors(prev => ({ ...prev, email: 'Email is required' }));
+                return;
             }
+            if (!formData.password) {
+                setErrors(prev => ({ ...prev, password: 'Password is required' }));
+                return;
+            }
+
+            await authService.login({
+                email: formData.email.trim(),
+                password: formData.password
+            });
+
+            // Get user profile after successful login
+            const profile = await authService.getUserProfile();
+
+            const isAdmin = profile.groups?.some((group: string) =>
+                ['super_admin', 'service_advisor', 'technician', 'parts_advisor'].includes(group)
+            );
+
+            toast({
+                title: 'Login successful',
+                status: 'success',
+                duration: 2000,
+                isClosable: true,
+            });
+
+            // Redirect based on user role
+            router.push(isAdmin ? '/admin/dashboard' : '/dashboard');
+
         } catch (error: any) {
             console.error('Login error:', error);
-            const errorMessage = error.response?.data?.message ||
-                error.message ||
-                'Login failed. Please try again.';
+
+            let errorMessage = 'Login failed. Please try again.';
+
+            if (error.response?.data) {
+                if (typeof error.response.data === 'string') {
+                    errorMessage = error.response.data;
+                } else if (error.response.data.detail) {
+                    errorMessage = error.response.data.detail;
+                } else if (error.response.data.non_field_errors) {
+                    errorMessage = error.response.data.non_field_errors[0];
+                }
+            }
+
+            setErrors({ auth: errorMessage });
 
             toast({
                 title: 'Error',
@@ -70,7 +99,6 @@ const LoginPage = () => {
                 duration: 5000,
                 isClosable: true,
             });
-            setErrors({ auth: errorMessage });
         } finally {
             setIsLoading(false);
         }
@@ -78,7 +106,11 @@ const LoginPage = () => {
 
     return (
         <Box p={8} maxWidth="400px" mx="auto" mt={10}>
-            <VStack spacing={6} as="form" onSubmit={handleSubmit as any}>
+            <VStack
+                spacing={6}
+                as="form"
+                onSubmit={(e: React.FormEvent<HTMLFormElement>) => handleSubmit(e)}
+            >
                 <Heading size="lg">Welcome Back</Heading>
                 <Text color="gray.600">Sign in to access your dashboard</Text>
 

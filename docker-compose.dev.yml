@@ -43,3 +43,8 @@ services:
     image: postgres
     env_file:
       - .env.dev
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
