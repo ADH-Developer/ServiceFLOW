@@ -9,13 +9,13 @@ export const serviceRequestsApi = {
         appointment_time: string;
     }) => {
         try {
-            const token = localStorage.getItem('authToken');
+            const token = localStorage.getItem('accessToken');
             if (!token) {
                 throw new Error('Authentication required');
             }
 
             if (token === 'undefined' || token === 'null') {
-                localStorage.removeItem('authToken');
+                localStorage.removeItem('accessToken');
                 throw new Error('Invalid authentication token');
             }
 
@@ -60,7 +60,7 @@ export const serviceRequestsApi = {
                 message: error.message,
                 response: error.response?.data,
                 status: error.response?.status,
-                token: localStorage.getItem('authToken')
+                token: localStorage.getItem('accessToken')
             });
             throw error;
         }
@@ -70,7 +70,6 @@ export const serviceRequestsApi = {
 export const customersApi = {
     register: async (data: RegisterInput) => {
         try {
-            // Format the data to match the backend expectations
             const formattedData = {
                 user: {
                     first_name: data.user.first_name,
@@ -79,49 +78,46 @@ export const customersApi = {
                     password: data.user.password
                 },
                 phone: data.phone,
-                preferred_contact: data.preferred_contact
+                preferred_contact: data.preferred_contact,
+                vehicles: []
             };
 
-            const response = await apiClient.post('/api/customers/register/', formattedData);
+            console.log('Formatted registration data:', formattedData);
 
-            // Store the token
+            const response = await apiClient.post('/api/customers/register/', formattedData);
+            console.log('Registration response:', response.data);
+
             if (response.data.token) {
-                localStorage.setItem('authToken', response.data.token);
+                localStorage.setItem('accessToken', response.data.token.access);
+                localStorage.setItem('refreshToken', response.data.token.refresh);
             }
 
             return response.data;
         } catch (error) {
-            console.error('Registration error:', error);
+            console.error('Registration error in API service:', error);
             throw error;
         }
     },
 
     login: async (credentials: { email: string; password: string }) => {
         try {
-            console.log('Attempting login with:', { email: credentials.email });
             const response = await apiClient.post('/api/customers/login/', credentials);
 
-            console.log('Login response:', response.data);
-
-            // The token is nested inside response.data.data.token
             if (response.data?.data?.token) {
-                localStorage.setItem('authToken', response.data.data.token);
-                return {
-                    ...response.data.data,
-                    token: response.data.data.token
-                };
+                localStorage.setItem('accessToken', response.data.data.token.access);
+                localStorage.setItem('refreshToken', response.data.data.token.refresh);
+                return response.data;
             } else {
-                console.error('No token received in login response');
                 throw new Error('Invalid response from server');
             }
-
         } catch (error: any) {
-            console.error('Login error:', {
-                message: error.message,
-                response: error.response?.data,
-                status: error.response?.status
-            });
+            console.error('Login error:', error);
             throw error;
         }
+    },
+
+    logout: () => {
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('refreshToken');
     }
 };

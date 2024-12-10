@@ -16,8 +16,8 @@ const Dashboard = () => {
     const router = useRouter();
 
     useEffect(() => {
-        // Check if user is authenticated
-        const token = localStorage.getItem('authToken');
+        // Update token name here too
+        const token = localStorage.getItem('accessToken');
         if (!token) {
             router.push('/login');
         }

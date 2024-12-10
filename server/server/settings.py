@@ -217,3 +217,23 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
 ]
+
+# Add default group permissions
+GROUPS = {
+    "Customer": {
+        "permissions": [
+            "can_view_own_profile",
+            "can_edit_own_profile",
+            "can_create_service_request",
+            "can_view_own_service_requests",
+        ]
+    },
+    "Staff": {
+        "permissions": [
+            "can_view_all_profiles",
+            "can_edit_all_profiles",
+            "can_view_all_service_requests",
+            "can_edit_service_requests",
+        ]
+    },
+}

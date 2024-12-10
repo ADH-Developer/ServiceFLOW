@@ -16,119 +16,88 @@ import {
 import Link from 'next/link';
 import { customersApi } from '../lib/api-services';
 
-type FormProps = {
-    onSubmit: (e: React.FormEvent) => void;
-    children: React.ReactNode;
-};
-
 const LoginPage = () => {
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState('');
     const router = useRouter();
     const toast = useToast();
-    const [isLoading, setIsLoading] = useState(false);
-    const [formData, setFormData] = useState({
-        email: '',
-        password: '',
-    });
-    const [errors, setErrors] = useState<Record<string, string>>({});
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsLoading(true);
-        setErrors({});
+        setError('');
 
         try {
-            console.log('Submitting login form...');
-            const response = await customersApi.login(formData);
+            const response = await customersApi.login({ email, password });
 
-            console.log('Login response received:', response);
-
-            if (response?.token) {
-                toast({
-                    title: 'Login successful',
-                    status: 'success',
-                    duration: 2000,
-                    isClosable: true,
-                });
-
-                // Small delay to show success message
-                setTimeout(() => {
-                    router.push('/dashboard');
-                }, 500);
-            } else {
-                throw new Error('No token received');
-            }
-        } catch (error: any) {
-            console.error('Login error:', error);
-            const errorMessage = error.response?.data?.message ||
-                error.message ||
-                'Login failed. Please try again.';
+            // Store tokens
+            localStorage.setItem('accessToken', response.data.token.access);
+            localStorage.setItem('refreshToken', response.data.token.refresh);
 
             toast({
-                title: 'Error',
-                description: errorMessage,
-                status: 'error',
-                duration: 5000,
-                isClosable: true,
+                title: 'Login successful',
+                status: 'success',
+                duration: 3000,
             });
-            setErrors({ auth: errorMessage });
+
+            router.push('/dashboard');
+        } catch (err: any) {
+            setError(err.response?.data?.message || 'Login failed');
+            toast({
+                title: 'Login failed',
+                description: err.response?.data?.message || 'Invalid credentials',
+                status: 'error',
+                duration: 3000,
+            });
         } finally {
             setIsLoading(false);
         }
     };
 
     return (
-        <Box p={8} maxWidth="400px" mx="auto" mt={10}>
-            <VStack spacing={6} as="form" onSubmit={handleSubmit as any}>
-                <Heading size="lg">Welcome Back</Heading>
-                <Text color="gray.600">Sign in to access your dashboard</Text>
+        <Box maxW="md" mx="auto" mt={8} p={6} borderWidth={1} borderRadius="lg">
+            <VStack spacing={4} as="form" onSubmit={handleSubmit}>
+                <Heading size="lg">Login</Heading>
 
-                <FormControl isInvalid={!!errors.email}>
-                    <FormLabel>Email</FormLabel>
-                    <Input
-                        type="email"
-                        value={formData.email}
-                        onChange={(e) => setFormData({
-                            ...formData,
-                            email: e.target.value
-                        })}
-                        required
-                    />
-                    <FormErrorMessage>{errors.email}</FormErrorMessage>
-                </FormControl>
-
-                <FormControl isInvalid={!!errors.password}>
-                    <FormLabel>Password</FormLabel>
-                    <Input
-                        type="password"
-                        value={formData.password}
-                        onChange={(e) => setFormData({
-                            ...formData,
-                            password: e.target.value
-                        })}
-                        required
-                    />
-                    <FormErrorMessage>{errors.password}</FormErrorMessage>
-                </FormControl>
-
-                {errors.auth && (
+                {error && (
                     <Text color="red.500" fontSize="sm">
-                        {errors.auth}
+                        {error}
                     </Text>
                 )}
 
+                <FormControl isRequired>
+                    <FormLabel>Email</FormLabel>
+                    <Input
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                    />
+                </FormControl>
+
+                <FormControl isRequired>
+                    <FormLabel>Password</FormLabel>
+                    <Input
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                    />
+                </FormControl>
+
                 <Button
                     type="submit"
-                    colorScheme="primary"
+                    colorScheme="blue"
                     width="full"
                     isLoading={isLoading}
                 >
-                    Sign In
+                    Login
                 </Button>
 
-                <Text fontSize="sm">
+                <Text>
                     Don't have an account?{' '}
                     <Link href="/register" passHref>
-                        <ChakraLink color="primary.500">Register here</ChakraLink>
+                        <ChakraLink color="blue.500">Register here</ChakraLink>
                     </Link>
                 </Text>
             </VStack>

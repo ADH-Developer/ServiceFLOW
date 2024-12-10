@@ -24,16 +24,20 @@ class UserSerializer(serializers.ModelSerializer):
 
 class CustomerProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer()
-    vehicles = VehicleSerializer(many=True, required=False)
+    groups = serializers.SerializerMethodField()
     token = serializers.SerializerMethodField()
+    vehicles = VehicleSerializer(many=True, required=False)
 
     class Meta:
         model = CustomerProfile
-        fields = ["user", "phone", "preferred_contact", "vehicles", "token"]
+        fields = ["user", "phone", "preferred_contact", "vehicles", "token", "groups"]
+
+    def get_groups(self, obj):
+        return [group.name for group in obj.user.groups.all()]
 
     def get_token(self, obj):
         refresh = RefreshToken.for_user(obj.user)
-        return str(refresh.access_token)
+        return {"access": str(refresh.access_token), "refresh": str(refresh)}
 
     def create(self, validated_data):
         user_data = validated_data.pop("user")
@@ -46,12 +50,13 @@ class CustomerProfileSerializer(serializers.ModelSerializer):
             password=user_data["password"],
             first_name=user_data["first_name"],
             last_name=user_data["last_name"],
+            is_active=True,
         )
 
         # Create CustomerProfile instance
         profile = CustomerProfile.objects.create(user=user, **validated_data)
 
-        # Create Vehicle instances
+        # Create Vehicle instances if any
         for vehicle_data in vehicles_data:
             vehicle = Vehicle.objects.create(**vehicle_data)
             profile.vehicles.add(vehicle)

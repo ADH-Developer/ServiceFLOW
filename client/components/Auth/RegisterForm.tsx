@@ -28,7 +28,8 @@ export const RegisterForm = () => {
             password: ''
         },
         phone: '',
-        preferred_contact: 'email'
+        preferred_contact: 'email',
+        vehicles: []
     });
     const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -59,22 +60,52 @@ export const RegisterForm = () => {
                 return;
             }
 
-            const response = await customersApi.register(formData);
+            console.log('Sending registration data:', formData); // Debug log
 
-            // If registration is successful, redirect to the next step
+            const response = await customersApi.register(formData);
+            console.log('Registration response:', response); // Debug log
+
             if (response.token) {
+                // Store tokens
+                localStorage.setItem('accessToken', response.token.access);
+                localStorage.setItem('refreshToken', response.token.refresh);
+
+                toast({
+                    title: 'Registration successful',
+                    status: 'success',
+                    duration: 3000,
+                });
+
                 router.push('/register/vehicle-service');
             }
         } catch (error) {
-            // Handle registration errors
+            console.error('Registration error:', error); // Debug log
+
             if (axios.isAxiosError(error) && error.response) {
-                // Check for email exists error from backend
+                console.log('Error response data:', error.response.data); // Debug log
+
+                // Handle specific error cases
                 if (error.response.data?.user?.email?.[0]?.includes('already exists')) {
                     setErrors({
                         'user.email': 'An account with this email already exists'
                     });
                 } else {
-                    setErrors(error.response.data);
+                    // Handle other validation errors from the backend
+                    const backendErrors = error.response.data;
+                    const formattedErrors: Record<string, string> = {};
+
+                    // Format backend errors to match frontend structure
+                    Object.entries(backendErrors).forEach(([key, value]) => {
+                        if (Array.isArray(value)) {
+                            formattedErrors[key] = value[0];
+                        } else if (typeof value === 'object' && value !== null) {
+                            Object.entries(value as Record<string, any>).forEach(([subKey, subValue]) => {
+                                formattedErrors[`${key}.${subKey}`] = Array.isArray(subValue) ? subValue[0] : subValue;
+                            });
+                        }
+                    });
+
+                    setErrors(formattedErrors);
                 }
             } else {
                 toast({

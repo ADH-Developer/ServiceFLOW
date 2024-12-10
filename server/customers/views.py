@@ -8,6 +8,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import CustomerProfile, ServiceItem, ServiceRequest
 from .serializers import CustomerProfileSerializer, ServiceRequestSerializer
@@ -16,26 +17,30 @@ from .serializers import CustomerProfileSerializer, ServiceRequestSerializer
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def register_customer(request):
-    print("Received data:", request.data)  # Debug print
+    print("Received registration data:", request.data)  # Debug print
     serializer = CustomerProfileSerializer(data=request.data)
+
     if not serializer.is_valid():
         print("Validation errors:", serializer.errors)  # Debug print
-    if serializer.is_valid():
-        customer = serializer.save()
-        # Generate token for the new user
-        from rest_framework_simplejwt.tokens import RefreshToken
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    try:
+        customer = serializer.save()
         refresh = RefreshToken.for_user(customer.user)
 
         return Response(
             {
                 "user": CustomerProfileSerializer(customer).data,
-                "token": str(refresh.access_token),
+                "token": {
+                    "access": str(refresh.access_token),
+                    "refresh": str(refresh),
+                },
             },
             status=status.HTTP_201_CREATED,
         )
-
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        print("Error during registration:", str(e))  # Debug print
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(["POST"])
@@ -55,8 +60,21 @@ def login_customer(request):
     if user:
         try:
             customer = CustomerProfile.objects.get(user=user)
+            refresh = RefreshToken.for_user(user)
             serializer = CustomerProfileSerializer(customer)
-            return Response({"message": "Login successful", "data": serializer.data})
+
+            return Response(
+                {
+                    "message": "Login successful",
+                    "data": {
+                        **serializer.data,
+                        "token": {
+                            "access": str(refresh.access_token),
+                            "refresh": str(refresh),
+                        },
+                    },
+                }
+            )
         except CustomerProfile.DoesNotExist:
             return Response(
                 {"message": "Customer profile not found"},
