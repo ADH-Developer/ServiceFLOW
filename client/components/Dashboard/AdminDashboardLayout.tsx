@@ -53,65 +53,6 @@ const TechnicianLinks: Array<LinkItemProps> = [
     { name: 'Settings', icon: FiSettings, path: '/admin/settings' },
 ];
 
-const Header = () => {
-    const router = useRouter();
-    const bg = useColorModeValue('white', 'gray.900');
-    const borderColor = useColorModeValue('gray.200', 'gray.700');
-    const { activeTab, setActiveTab } = useTab();
-
-    const handleLogout = () => {
-        customersApi.logout();
-        router.push('/login');
-    };
-
-    return (
-        <Flex
-            px={4}
-            height="20"
-            alignItems="center"
-            bg={bg}
-            borderBottomWidth="1px"
-            borderBottomColor={borderColor}
-            justifyContent="space-between"
-        >
-            <Tabs
-                variant="enclosed"
-                onChange={(index) => setActiveTab(index === 0 ? 'service-advisor' : 'technician')}
-                index={activeTab === 'service-advisor' ? 0 : 1}
-            >
-                <TabList border="none">
-                    <Tab>Service Advisor</Tab>
-                    <Tab>Technician</Tab>
-                </TabList>
-            </Tabs>
-
-            <HStack spacing={4}>
-                <IconButton
-                    aria-label="Notifications"
-                    icon={<FiBell />}
-                    variant="ghost"
-                    size="lg"
-                />
-                <Menu>
-                    <MenuButton
-                        py={2}
-                        transition="all 0.3s"
-                        _focus={{ boxShadow: 'none' }}
-                    >
-                        <HStack>
-                            <Text fontSize="sm">Admin User</Text>
-                            <Icon as={FiChevronDown} />
-                        </HStack>
-                    </MenuButton>
-                    <MenuList>
-                        <MenuItem onClick={handleLogout}>Sign out</MenuItem>
-                    </MenuList>
-                </Menu>
-            </HStack>
-        </Flex>
-    );
-};
-
 interface SidebarProps extends BoxProps {
     onClose: () => void;
 }
@@ -179,16 +120,75 @@ const NavItem = ({ icon, path, children, ...rest }: NavItemProps) => {
 
 export default function AdminDashboardLayout({ children }: { children: ReactNode }) {
     const { isOpen, onOpen, onClose } = useDisclosure();
+    const { activeTab, setActiveTab } = useTab();
+    const bg = useColorModeValue('white', 'gray.900');
+    const borderColor = useColorModeValue('gray.200', 'gray.700');
+    const router = useRouter();
+
+    const handleLogout = () => {
+        customersApi.logout();
+        router.push('/login');
+    };
 
     return (
         <Box minH="100vh" bg={useColorModeValue('gray.100', 'gray.900')}>
-            <Sidebar onClose={() => onClose} display={{ base: 'none', md: 'block' }} />
-            <Box ml={{ base: 0, md: 60 }}>
-                <Header />
-                <Box p="4">
-                    {children}
+            <Flex direction="column">
+                {/* Tab Bar with Alert and User Menu */}
+                <Box
+                    bg={bg}
+                    borderBottom="1px"
+                    borderColor={borderColor}
+                    position="fixed"
+                    w="100%"
+                    zIndex={2}
+                >
+                    <Flex px={4} justify="space-between" align="center">
+                        <Tabs
+                            variant="enclosed"
+                            onChange={(index) => setActiveTab(index === 0 ? 'service-advisor' : 'technician')}
+                            index={activeTab === 'service-advisor' ? 0 : 1}
+                        >
+                            <TabList border="none">
+                                <Tab>Service Advisor</Tab>
+                                <Tab>Technician</Tab>
+                            </TabList>
+                        </Tabs>
+                        <HStack spacing={4}>
+                            <IconButton
+                                aria-label="Notifications"
+                                icon={<FiBell />}
+                                variant="ghost"
+                                size="lg"
+                            />
+                            <Menu>
+                                <MenuButton
+                                    py={2}
+                                    transition="all 0.3s"
+                                    _focus={{ boxShadow: 'none' }}
+                                >
+                                    <HStack>
+                                        <Text fontSize="sm">Admin User</Text>
+                                        <Icon as={FiChevronDown} />
+                                    </HStack>
+                                </MenuButton>
+                                <MenuList>
+                                    <MenuItem onClick={handleLogout}>Sign out</MenuItem>
+                                </MenuList>
+                            </Menu>
+                        </HStack>
+                    </Flex>
                 </Box>
-            </Box>
+
+                {/* Main Content */}
+                <Flex pt="40px">
+                    <Sidebar onClose={() => onClose} display={{ base: 'none', md: 'block' }} />
+                    <Box ml={{ base: 0, md: 60 }} w="full">
+                        <Box p="4">
+                            {children}
+                        </Box>
+                    </Box>
+                </Flex>
+            </Flex>
         </Box>
     );
 }
