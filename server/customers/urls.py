@@ -9,7 +9,7 @@ router.register(
 )
 
 urlpatterns = [
+    path("register/", views.register_customer, name="register"),
+    path("login/", views.login_customer, name="login"),
     path("", include(router.urls)),
-    path("register/", views.register_customer, name="register-customer"),
-    path("login/", views.login_customer, name="login-customer"),
 ]

@@ -19,39 +19,27 @@ import { customersApi } from '../lib/api-services';
 const LoginPage = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
     const router = useRouter();
     const toast = useToast();
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        setIsLoading(true);
         setError('');
+        setIsLoading(true);
 
         try {
             const response = await customersApi.login({ email, password });
 
-            // Store tokens
-            localStorage.setItem('accessToken', response.data.token.access);
-            localStorage.setItem('refreshToken', response.data.token.refresh);
-
-            toast({
-                title: 'Login successful',
-                status: 'success',
-                duration: 3000,
-            });
-
-            router.push('/dashboard');
-        } catch (err: any) {
-            setError(err.response?.data?.message || 'Login failed');
-            toast({
-                title: 'Login failed',
-                description: err.response?.data?.message || 'Invalid credentials',
-                status: 'error',
-                duration: 3000,
-            });
-        } finally {
+            // Check if user is staff and redirect accordingly
+            if (response.data.user.is_staff) {
+                router.push('/admin/dashboard');
+            } else {
+                router.push('/dashboard');
+            }
+        } catch (error: any) {
+            setError(error.response?.data?.message || 'Login failed');
             setIsLoading(false);
         }
     };

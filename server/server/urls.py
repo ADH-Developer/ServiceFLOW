@@ -20,6 +20,7 @@ from django.urls import path
 from drf_yasg import openapi
 from drf_yasg.views import get_schema_view
 from rest_framework import permissions
+from rest_framework_simplejwt.views import TokenRefreshView
 
 schema_view = get_schema_view(
     openapi.Info(
@@ -52,4 +53,5 @@ urlpatterns = [
     path("api/customers/", include("customers.urls")),
     url(r"^auth/", include("djoser.urls")),
     url(r"^auth/", include("djoser.urls.jwt")),
+    path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
 ]

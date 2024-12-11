@@ -1,3 +1,4 @@
+import logging
 import zoneinfo
 from datetime import datetime, time, timedelta
 
@@ -12,6 +13,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import CustomerProfile, ServiceItem, ServiceRequest
 from .serializers import CustomerProfileSerializer, ServiceRequestSerializer
+
+logger = logging.getLogger(__name__)
 
 
 @api_view(["POST"])
@@ -55,19 +58,54 @@ def login_customer(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    # Try authenticating with email as username first
     user = authenticate(username=email, password=password)
 
-    if user:
+    # If that fails, try to find user by email and authenticate with their username
+    if not user:
         try:
-            customer = CustomerProfile.objects.get(user=user)
-            refresh = RefreshToken.for_user(user)
-            serializer = CustomerProfileSerializer(customer)
+            from django.contrib.auth.models import User
 
+            user_obj = User.objects.get(email=email)
+            user = authenticate(username=user_obj.username, password=password)
+        except User.DoesNotExist:
+            pass
+
+    if user:
+        refresh = RefreshToken.for_user(user)
+
+        # Add user role information
+        user_data = {
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "is_staff": user.is_staff,
+            "is_superuser": user.is_superuser,
+            "groups": list(user.groups.values_list("name", flat=True)),
+        }
+
+        # Don't require CustomerProfile for staff/superusers
+        if user.is_staff or user.is_superuser:
             return Response(
                 {
                     "message": "Login successful",
                     "data": {
-                        **serializer.data,
+                        "user": user_data,
+                        "token": {
+                            "access": str(refresh.access_token),
+                            "refresh": str(refresh),
+                        },
+                    },
+                }
+            )
+
+        try:
+            customer = CustomerProfile.objects.get(user=user)
+            return Response(
+                {
+                    "message": "Login successful",
+                    "data": {
+                        "user": user_data,
                         "token": {
                             "access": str(refresh.access_token),
                             "refresh": str(refresh),
@@ -89,6 +127,7 @@ def login_customer(request):
 class ServiceRequestViewSet(viewsets.ModelViewSet):
     serializer_class = ServiceRequestSerializer
     permission_classes = [IsAuthenticated]
+    basename = "service-request"
 
     def validate_appointment_time(self, date_str, time_str):
         """Validate that the appointment time is valid and available"""
@@ -181,6 +220,8 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def get_queryset(self):
+        if self.request.user.is_staff:
+            return ServiceRequest.objects.all().order_by("-created_at")
         return ServiceRequest.objects.filter(
             customer=self.request.user.customerprofile
         ).order_by("-created_at")
@@ -247,3 +288,25 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
                 {"error": "Invalid date format. Use YYYY-MM-DD"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+    @action(detail=False, methods=["get"], url_path="pending/count")
+    def pending_count(self, request):
+        logger.debug(f"Accessing pending_count endpoint. User: {request.user}")
+        try:
+            count = ServiceRequest.objects.filter(status="pending").count()
+            logger.debug(f"Found {count} pending requests")
+            return Response({"count": count})
+        except Exception as e:
+            logger.error(f"Error in pending_count: {str(e)}")
+            return Response({"error": str(e)}, status=500)
+
+    @action(detail=False, methods=["get"], url_path="today")
+    def today(self, request):
+        today = timezone.now().date()
+        appointments = (
+            ServiceRequest.objects.filter(appointment_date=today)
+            .select_related("customer", "vehicle")
+            .order_by("appointment_time")
+        )
+        serializer = self.get_serializer(appointments, many=True)
+        return Response(serializer.data)
