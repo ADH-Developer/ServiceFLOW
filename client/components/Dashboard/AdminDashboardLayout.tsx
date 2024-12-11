@@ -15,31 +15,49 @@ import {
     MenuItem,
     Text,
     HStack,
+    Tabs,
+    TabList,
+    Tab,
 } from '@chakra-ui/react';
 import {
     FiHome,
-    FiTrendingUp,
-    FiCompass,
-    FiStar,
+    FiCalendar,
+    FiClipboard,
+    FiTool,
+    FiUsers,
     FiSettings,
     FiBell,
     FiChevronDown,
 } from 'react-icons/fi';
+import { useTab } from '../../contexts/TabContext';
 import { useRouter } from 'next/router';
 import { customersApi } from '../../lib/api-services';
 
-const LinkItems = [
-    { name: 'Home', icon: FiHome, path: '/dashboard' },
-    { name: 'Service History', icon: FiTrendingUp, path: '/dashboard/history' },
-    { name: 'Vehicles', icon: FiCompass, path: '/dashboard/vehicles' },
-    { name: 'Appointments', icon: FiStar, path: '/dashboard/appointments' },
-    { name: 'Settings', icon: FiSettings, path: '/dashboard/settings' },
+interface LinkItemProps {
+    name: string;
+    icon: any;
+    path: string;
+}
+
+const ServiceAdvisorLinks: Array<LinkItemProps> = [
+    { name: 'Dashboard', icon: FiHome, path: '/admin/dashboard' },
+    { name: 'Schedule', icon: FiCalendar, path: '/admin/schedule' },
+    { name: 'Appointments', icon: FiClipboard, path: '/admin/appointments' },
+    { name: 'Customers', icon: FiUsers, path: '/admin/customers' },
+    { name: 'Settings', icon: FiSettings, path: '/admin/settings' },
+];
+
+const TechnicianLinks: Array<LinkItemProps> = [
+    { name: 'Dashboard', icon: FiHome, path: '/admin/dashboard' },
+    { name: 'Work Orders', icon: FiTool, path: '/admin/work-orders' },
+    { name: 'Settings', icon: FiSettings, path: '/admin/settings' },
 ];
 
 const Header = () => {
     const router = useRouter();
     const bg = useColorModeValue('white', 'gray.900');
     const borderColor = useColorModeValue('gray.200', 'gray.700');
+    const { activeTab, setActiveTab } = useTab();
 
     const handleLogout = () => {
         customersApi.logout();
@@ -54,8 +72,19 @@ const Header = () => {
             bg={bg}
             borderBottomWidth="1px"
             borderBottomColor={borderColor}
-            justifyContent="flex-end"
+            justifyContent="space-between"
         >
+            <Tabs
+                variant="enclosed"
+                onChange={(index) => setActiveTab(index === 0 ? 'service-advisor' : 'technician')}
+                index={activeTab === 'service-advisor' ? 0 : 1}
+            >
+                <TabList border="none">
+                    <Tab>Service Advisor</Tab>
+                    <Tab>Technician</Tab>
+                </TabList>
+            </Tabs>
+
             <HStack spacing={4}>
                 <IconButton
                     aria-label="Notifications"
@@ -70,7 +99,7 @@ const Header = () => {
                         _focus={{ boxShadow: 'none' }}
                     >
                         <HStack>
-                            <Text fontSize="sm">Profile</Text>
+                            <Text fontSize="sm">Admin User</Text>
                             <Icon as={FiChevronDown} />
                         </HStack>
                     </MenuButton>
@@ -88,6 +117,9 @@ interface SidebarProps extends BoxProps {
 }
 
 const Sidebar = ({ onClose, ...rest }: SidebarProps) => {
+    const { activeTab } = useTab();
+    const links = activeTab === 'service-advisor' ? ServiceAdvisorLinks : TechnicianLinks;
+
     return (
         <Box
             bg={useColorModeValue('white', 'gray.900')}
@@ -98,7 +130,7 @@ const Sidebar = ({ onClose, ...rest }: SidebarProps) => {
             h="full"
             {...rest}
         >
-            {LinkItems.map((link) => (
+            {links.map((link) => (
                 <NavItem key={link.name} icon={link.icon} path={link.path}>
                     {link.name}
                 </NavItem>
@@ -145,7 +177,7 @@ const NavItem = ({ icon, path, children, ...rest }: NavItemProps) => {
     );
 };
 
-export default function DashboardLayout({ children }: { children: ReactNode }) {
+export default function AdminDashboardLayout({ children }: { children: ReactNode }) {
     const { isOpen, onOpen, onClose } = useDisclosure();
 
     return (
@@ -159,4 +191,4 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
             </Box>
         </Box>
     );
-} 
+}

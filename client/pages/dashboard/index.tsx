@@ -4,22 +4,27 @@ import {
     Box,
     SimpleGrid,
     Text,
-    Stat,
-    StatLabel,
-    StatNumber,
-    StatHelpText,
     useColorModeValue,
 } from '@chakra-ui/react';
 import DashboardLayout from '../../components/Dashboard/DashboardLayout';
+import { StatCard } from '../../components/Dashboard/StatCard';
 
 const Dashboard = () => {
     const router = useRouter();
 
     useEffect(() => {
-        // Update token name here too
         const token = localStorage.getItem('accessToken');
-        if (!token) {
+        const userData = localStorage.getItem('userData');
+
+        if (!token || !userData) {
             router.push('/login');
+            return;
+        }
+
+        // Redirect staff users to admin dashboard
+        const user = JSON.parse(userData);
+        if (user.is_staff) {
+            router.push('/admin/dashboard');
         }
     }, [router]);
 
@@ -50,35 +55,5 @@ const Dashboard = () => {
         </DashboardLayout>
     );
 };
-
-interface StatCardProps {
-    title: string;
-    stat: string;
-    helpText: string;
-}
-
-function StatCard({ title, stat, helpText }: StatCardProps) {
-    const bgColor = useColorModeValue('white', 'gray.700');
-
-    return (
-        <Stat
-            px={{ base: 4, md: 8 }}
-            py="5"
-            shadow="xl"
-            border="1px solid"
-            borderColor={useColorModeValue('gray.200', 'gray.500')}
-            rounded="lg"
-            bg={bgColor}
-        >
-            <StatLabel fontWeight="medium" isTruncated>
-                {title}
-            </StatLabel>
-            <StatNumber fontSize="2xl" fontWeight="medium">
-                {stat}
-            </StatNumber>
-            <StatHelpText>{helpText}</StatHelpText>
-        </Stat>
-    );
-}
 
 export default Dashboard; 
