@@ -47,10 +47,14 @@ export const AppointmentsList = ({ appointments }: AppointmentsListProps) => {
                 >
                     <Text fontWeight="bold">
                         {format(new Date(`${appointment.appointment_date}T${appointment.appointment_time}`), 'h:mm a')} -{' '}
-                        {appointment.customer.first_name} {appointment.customer.last_name}
+                        {appointment.customer ?
+                            `${appointment.customer.first_name} ${appointment.customer.last_name}` :
+                            'No customer assigned'}
                     </Text>
                     <Text fontSize="sm" color="gray.500">
-                        {appointment.vehicle.year} {appointment.vehicle.make} {appointment.vehicle.model}
+                        {appointment.vehicle ?
+                            `${appointment.vehicle.year} ${appointment.vehicle.make} ${appointment.vehicle.model}` :
+                            'No vehicle information'}
                     </Text>
                     <Box mt={2}>
                         {appointment.services.map((service, idx) => (

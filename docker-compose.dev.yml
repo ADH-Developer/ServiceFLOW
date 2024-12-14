@@ -19,6 +19,7 @@ services:
       sh -c "sh migrations.sh && python manage.py runserver 0.0.0.0:8000"
     depends_on:
       - db
+      - redis
 
   client:
     container_name: client
@@ -43,3 +44,16 @@ services:
     image: postgres
     env_file:
       - .env.dev
+
+  redis:
+    container_name: redis
+    image: redis:7.0-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --save 20 1 --loglevel warning --requirepass gLMgr@9DAy77UE4
+    restart: always
+
+volumes:
+  redis_data:

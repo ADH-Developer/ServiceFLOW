@@ -54,8 +54,15 @@ const Header = () => {
             bg={bg}
             borderBottomWidth="1px"
             borderBottomColor={borderColor}
-            justifyContent="flex-end"
+            justifyContent="space-between"
         >
+            <Box
+                fontSize="2xl"
+                fontWeight="bold"
+                color="cyan.500"
+            >
+                ServiceFLOW
+            </Box>
             <HStack spacing={4}>
                 <IconButton
                     aria-label="Notifications"
@@ -150,13 +157,15 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
     return (
         <Box minH="100vh" bg={useColorModeValue('gray.100', 'gray.900')}>
-            <Sidebar onClose={() => onClose} display={{ base: 'none', md: 'block' }} />
-            <Box ml={{ base: 0, md: 60 }}>
-                <Header />
-                <Box p="4">
-                    {children}
+            <Header />
+            <Flex pt="0">
+                <Sidebar onClose={() => onClose} display={{ base: 'none', md: 'block' }} />
+                <Box ml={{ base: 0, md: 60 }} w="full">
+                    <Box p="4">
+                        {children}
+                    </Box>
                 </Box>
-            </Box>
+            </Flex>
         </Box>
     );
 } 
