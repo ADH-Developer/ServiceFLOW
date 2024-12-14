@@ -48,7 +48,8 @@ INSTALLED_APPS = [
     "rest_framework",
     "djoser",
     "drf_yasg",
-    "customers",
+    "channels",
+    "customers.apps.CustomersConfig",
 ]
 
 MIDDLEWARE = [
@@ -258,5 +259,16 @@ GROUPS = {
             "can_view_all_service_requests",
             "can_edit_service_requests",
         ]
+    },
+}
+
+# Channels Configuration
+ASGI_APPLICATION = "server.asgi.application"
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/0"],
+        },
     },
 }

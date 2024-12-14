@@ -1,5 +1,14 @@
+import logging
+
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.contrib.auth.models import Group, User
+from django.core.cache import cache
 from django.db import models
+
+from .cache import AppointmentCache
+
+logger = logging.getLogger(__name__)
 
 
 class Vehicle(models.Model):
@@ -63,3 +72,53 @@ class ServiceRequest(models.Model):
 
     def __str__(self):
         return f"{self.customer} - {self.appointment_date} {self.appointment_time}"
+
+    def update_cache_and_notify(self):
+        """Update cache and send WebSocket notification"""
+        try:
+            # Get new count
+            count = ServiceRequest.objects.filter(status="pending").count()
+
+            # Update cache
+            try:
+                cache.set("pending_appointments_count", count, 300)
+            except Exception as e:
+                logger.error(f"Error updating cache: {e}")
+
+            # Send WebSocket notification
+            try:
+                channel_layer = get_channel_layer()
+                async_to_sync(channel_layer.group_send)(
+                    "appointments", {"type": "appointment_update", "count": count}
+                )
+            except Exception as e:
+                logger.error(f"Error sending WebSocket notification: {e}")
+
+            return count
+        except Exception as e:
+            logger.error(f"Error in update_cache_and_notify: {e}")
+            return None
+
+    def save(self, *args, **kwargs):
+        # Check if status is changing
+        if self.pk:
+            try:
+                old_instance = ServiceRequest.objects.get(pk=self.pk)
+                status_changed = old_instance.status != self.status
+            except ServiceRequest.DoesNotExist:
+                status_changed = True
+        else:
+            status_changed = True  # New instance
+
+        # Save the instance
+        super().save(*args, **kwargs)
+
+        # Update cache if status changed
+        if status_changed:
+            self.update_cache_and_notify()
+
+    def delete(self, *args, **kwargs):
+        # Delete the instance
+        super().delete(*args, **kwargs)
+        # Update cache and send notification
+        self.update_cache_and_notify()

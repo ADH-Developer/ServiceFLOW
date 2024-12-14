@@ -15,8 +15,11 @@ services:
       - ./server:/src
     env_file:
       - .env.dev
+    environment:
+      - DJANGO_SETTINGS_MODULE=server.settings
+      - PYTHONPATH=/src
     command: >
-      sh -c "sh migrations.sh && python manage.py runserver 0.0.0.0:8000"
+      sh -c "sh migrations.sh && daphne -b 0.0.0.0 -p 8000 server.asgi:application"
     depends_on:
       - db
       - redis
@@ -44,6 +47,8 @@ services:
     image: postgres
     env_file:
       - .env.dev
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
 
   redis:
     container_name: redis
@@ -56,4 +61,5 @@ services:
     restart: always
 
 volumes:
+  postgres_data:
   redis_data:

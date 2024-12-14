@@ -11,6 +11,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from .cache import AppointmentCache
 from .models import CustomerProfile, ServiceItem, ServiceRequest
 from .serializers import CustomerProfileSerializer, ServiceRequestSerializer
 
@@ -291,9 +292,15 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="pending/count")
     def pending_count(self, request):
+        """Get count of pending appointments, using cache"""
         logger.debug(f"Accessing pending_count endpoint. User: {request.user}")
         try:
-            count = ServiceRequest.objects.filter(status="pending").count()
+            # Get count from cache
+            count = AppointmentCache.get_pending_count()
+            if count is None:
+                # Fallback to database if cache fails
+                count = ServiceRequest.objects.filter(status="pending").count()
+
             logger.debug(f"Found {count} pending requests")
             return Response({"count": count})
         except Exception as e:
