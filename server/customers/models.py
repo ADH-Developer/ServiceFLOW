@@ -4,6 +4,7 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.contrib.auth.models import Group, User
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.db import models
 
 from .cache import AppointmentCache
@@ -69,9 +70,39 @@ class ServiceRequest(models.Model):
     appointment_time = models.TimeField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    after_hours_dropoff = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.customer} - {self.appointment_date} {self.appointment_time}"
+
+    def clean(self):
+        if self.appointment_date and self.appointment_time:
+            from datetime import datetime
+
+            appointment_datetime = datetime.combine(
+                self.appointment_date, self.appointment_time
+            )
+
+            within_hours, allows_after_hours = (
+                BusinessHours.is_time_within_business_hours(appointment_datetime)
+            )
+
+            if not within_hours and not (
+                allows_after_hours and self.after_hours_dropoff
+            ):
+                business_hours = BusinessHours.objects.get(
+                    day_of_week=appointment_datetime.weekday()
+                )
+                if not business_hours.is_open:
+                    raise ValidationError(
+                        "This day is not available for appointments as the business is closed."
+                    )
+                elif not allows_after_hours:
+                    raise ValidationError(
+                        f"Appointments must be scheduled during business hours: "
+                        f"{business_hours.start_time.strftime('%I:%M %p')} - "
+                        f"{business_hours.end_time.strftime('%I:%M %p')}"
+                    )
 
     def update_cache_and_notify(self):
         """Update cache and send WebSocket notification"""
@@ -100,6 +131,8 @@ class ServiceRequest(models.Model):
             return None
 
     def save(self, *args, **kwargs):
+        self.clean()  # Run validation before saving
+
         # Check if status is changing
         if self.pk:
             try:
@@ -122,3 +155,57 @@ class ServiceRequest(models.Model):
         super().delete(*args, **kwargs)
         # Update cache and send notification
         self.update_cache_and_notify()
+
+
+class BusinessHours(models.Model):
+    DAYS_OF_WEEK = [
+        (0, "Monday"),
+        (1, "Tuesday"),
+        (2, "Wednesday"),
+        (3, "Thursday"),
+        (4, "Friday"),
+        (5, "Saturday"),
+        (6, "Sunday"),
+    ]
+
+    day_of_week = models.IntegerField(choices=DAYS_OF_WEEK, unique=True)
+    is_open = models.BooleanField(default=True)
+    start_time = models.TimeField(null=True, blank=True)
+    end_time = models.TimeField(null=True, blank=True)
+    allow_after_hours_dropoff = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name = "Business Hours"
+        verbose_name_plural = "Business Hours"
+        ordering = ["day_of_week"]
+
+    def clean(self):
+        if self.is_open:
+            if not self.start_time or not self.end_time:
+                raise ValidationError(
+                    "Start time and end time are required when business is open"
+                )
+            if self.start_time >= self.end_time:
+                raise ValidationError("Start time must be before end time")
+
+    def __str__(self):
+        day_name = dict(self.DAYS_OF_WEEK)[self.day_of_week]
+        if not self.is_open:
+            return f"{day_name}: Closed"
+        return f"{day_name}: {self.start_time.strftime('%I:%M %p')} - {self.end_time.strftime('%I:%M %p')}"
+
+    @classmethod
+    def is_time_within_business_hours(cls, date_time):
+        """Check if a given datetime is within business hours"""
+        day_of_week = date_time.weekday()
+        time = date_time.time()
+
+        try:
+            business_hours = cls.objects.get(day_of_week=day_of_week)
+            if not business_hours.is_open:
+                return False, business_hours.allow_after_hours_dropoff
+
+            within_hours = business_hours.start_time <= time <= business_hours.end_time
+            return within_hours, business_hours.allow_after_hours_dropoff
+        except cls.DoesNotExist:
+            return False, False

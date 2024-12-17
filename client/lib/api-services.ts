@@ -137,6 +137,16 @@ const appointmentsApi = {
         const response = await apiClient.get('/api/customers/service-requests/today/');
         return response.data;
     },
+
+    getBusinessHours: async () => {
+        const response = await apiClient.get('/api/customers/service-requests/business-hours/');
+        return response.data;
+    },
+
+    getAvailableSlots: async (date: string) => {
+        const response = await apiClient.get(`/api/customers/service-requests/available_slots/?date=${date}`);
+        return response.data;
+    }
 };
 
 export { appointmentsApi };

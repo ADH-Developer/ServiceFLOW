@@ -1,14 +1,26 @@
-import { z } from 'zod';
+import * as yup from 'yup';
 
-export const registerSchema = z.object({
-    user: z.object({
-        first_name: z.string().min(1, 'First name is required'),
-        last_name: z.string().min(1, 'Last name is required'),
-        email: z.string().email('Invalid email address'),
-        password: z.string().min(6, 'Password must be at least 6 characters')
+export const registerSchema = yup.object().shape({
+    user: yup.object().shape({
+        first_name: yup.string().required('First name is required'),
+        last_name: yup.string().required('Last name is required'),
+        email: yup.string().email('Invalid email').required('Email is required'),
+        password: yup.string()
+            .min(8, 'Password must be at least 8 characters')
+            .required('Password is required'),
     }),
-    phone: z.string().min(1, 'Phone number is required'),
-    preferred_contact: z.enum(['email', 'phone', 'both'])
+    phone: yup.string()
+        .matches(/^\d{10}$/, 'Phone number must be 10 digits')
+        .required('Phone number is required'),
+    preferred_contact: yup.string()
+        .oneOf(['email', 'phone'], 'Invalid contact preference')
+        .required('Contact preference is required'),
 });
 
-export type RegisterInput = z.infer<typeof registerSchema>; 
+export const loginSchema = yup.object().shape({
+    email: yup.string().email('Invalid email').required('Email is required'),
+    password: yup.string().required('Password is required'),
+});
+
+export type RegisterInput = yup.InferType<typeof registerSchema>;
+export type LoginInput = yup.InferType<typeof loginSchema>; 

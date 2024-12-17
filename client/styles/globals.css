@@ -10,6 +10,7 @@ body {
   box-sizing: border-box;
 }
 
+/* Calendar Styles */
 .custom-datepicker-wrapper .react-datepicker {
   font-family: inherit;
   border: none;
@@ -19,18 +20,64 @@ body {
 .custom-datepicker-wrapper .react-datepicker__header {
   background: transparent;
   border: none;
+  padding-top: 0;
 }
 
-.custom-datepicker-wrapper .react-datepicker__day--selected {
-  background-color: var(--chakra-colors-primary-500);
-  border-radius: 50%;
+.custom-datepicker-wrapper .react-datepicker__current-month {
+  font-weight: 600;
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.custom-datepicker-wrapper .react-datepicker__day-name {
+  color: var(--chakra-colors-gray-500);
+  font-weight: 500;
+}
+
+.custom-datepicker-wrapper .react-datepicker__day {
+  border-radius: 0.375rem;
+  color: var(--chakra-colors-gray-700);
 }
 
 .custom-datepicker-wrapper .react-datepicker__day:hover {
-  background-color: var(--chakra-colors-primary-100);
-  border-radius: 50%;
+  background-color: var(--chakra-colors-gray-100);
+}
+
+.custom-datepicker-wrapper .react-datepicker__day--selected {
+  background-color: var(--chakra-colors-blue-500) !important;
+  color: white !important;
+}
+
+.custom-datepicker-wrapper .react-datepicker__day--keyboard-selected {
+  background-color: var(--chakra-colors-blue-100);
+  color: var(--chakra-colors-blue-700);
 }
 
 .custom-datepicker-wrapper .react-datepicker__day--disabled {
   color: var(--chakra-colors-gray-300);
+}
+
+.custom-datepicker-wrapper .react-datepicker__navigation {
+  top: 0.5rem;
+}
+
+/* Dark mode styles */
+[data-theme="dark"] .custom-datepicker-wrapper .react-datepicker__day {
+  color: var(--chakra-colors-whiteAlpha-900);
+}
+
+[data-theme="dark"] .custom-datepicker-wrapper .react-datepicker__day:hover {
+  background-color: var(--chakra-colors-whiteAlpha-200);
+}
+
+[data-theme="dark"] .custom-datepicker-wrapper .react-datepicker__day--disabled {
+  color: var(--chakra-colors-whiteAlpha-400);
+}
+
+[data-theme="dark"] .custom-datepicker-wrapper .react-datepicker__day-name {
+  color: var(--chakra-colors-whiteAlpha-600);
+}
+
+[data-theme="dark"] .custom-datepicker-wrapper .react-datepicker__current-month {
+  color: var(--chakra-colors-whiteAlpha-900);
 }

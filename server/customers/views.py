@@ -12,7 +12,7 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .cache import AppointmentCache
-from .models import CustomerProfile, ServiceItem, ServiceRequest
+from .models import BusinessHours, CustomerProfile, ServiceItem, ServiceRequest
 from .serializers import CustomerProfileSerializer, ServiceRequestSerializer
 
 logger = logging.getLogger(__name__)
@@ -130,6 +130,37 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     basename = "service-request"
 
+    @action(detail=False, methods=["get"], url_path="business-hours")
+    def business_hours(self, request):
+        """Get business hours configuration"""
+        try:
+            business_hours = BusinessHours.objects.all().order_by("day_of_week")
+            hours_data = []
+
+            for bh in business_hours:
+                hours_data.append(
+                    {
+                        "day": dict(BusinessHours.DAYS_OF_WEEK)[bh.day_of_week],
+                        "day_of_week": bh.day_of_week,
+                        "is_open": bh.is_open,
+                        "start_time": (
+                            bh.start_time.strftime("%H:%M") if bh.start_time else None
+                        ),
+                        "end_time": (
+                            bh.end_time.strftime("%H:%M") if bh.end_time else None
+                        ),
+                        "allow_after_hours_dropoff": bh.allow_after_hours_dropoff,
+                    }
+                )
+
+            return Response(hours_data)
+        except Exception as e:
+            logger.error(f"Error fetching business hours: {e}")
+            return Response(
+                {"error": "Failed to fetch business hours"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
     def validate_appointment_time(self, date_str, time_str):
         """Validate that the appointment time is valid and available"""
         try:
@@ -171,9 +202,25 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
                         "Same-day appointments must be at least 10 minutes in the future"
                     )
 
-            # Business hours check (9 AM - 4 PM EST)
-            if appointment_datetime.hour < 9 or appointment_datetime.hour >= 16:
-                raise ValidationError("Appointments must be between 9 AM and 4 PM EST")
+            # Check business hours
+            within_hours, allows_after_hours = (
+                BusinessHours.is_time_within_business_hours(appointment_datetime)
+            )
+
+            if not within_hours:
+                business_hours = BusinessHours.objects.get(
+                    day_of_week=appointment_datetime.weekday()
+                )
+                if not business_hours.is_open:
+                    raise ValidationError(
+                        "This day is not available for appointments as the business is closed."
+                    )
+                else:
+                    raise ValidationError(
+                        f"Appointments must be scheduled during business hours: "
+                        f"{business_hours.start_time.strftime('%I:%M %p')} - "
+                        f"{business_hours.end_time.strftime('%I:%M %p')}"
+                    )
 
             # 10-minute interval check
             if appointment_datetime.minute % 10 != 0:
@@ -254,31 +301,54 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
             shop_tz = zoneinfo.ZoneInfo("America/New_York")
             current_datetime = timezone.now().astimezone(shop_tz)
 
+            # Get business hours for the requested day
+            day_of_week = requested_date.weekday()
+            try:
+                business_hours = BusinessHours.objects.get(day_of_week=day_of_week)
+                if not business_hours.is_open:
+                    return Response([])  # Return empty list for closed days
+            except BusinessHours.DoesNotExist:
+                return Response([])  # Return empty list if no business hours set
+
             # Check if requested date is today or future
             is_next_day = requested_date > current_datetime.date()
 
-            # Generate base time slots
+            # Generate base time slots based on business hours
             time_slots = []
-            for hour in range(9, 17):  # 9 AM to 4 PM
-                if hour == 12:  # Skip lunch hour
-                    continue
-                for minute in range(0, 60, 10):
-                    slot_time = datetime.combine(requested_date, time(hour, minute))
-                    slot_time = timezone.make_aware(slot_time, shop_tz)
+            if business_hours.start_time and business_hours.end_time:
+                start_hour = business_hours.start_time.hour
+                end_hour = business_hours.end_time.hour
+                start_minute = business_hours.start_time.minute
+                end_minute = business_hours.end_time.minute
+
+                current_time = datetime.combine(
+                    requested_date, business_hours.start_time
+                )
+                end_time = datetime.combine(requested_date, business_hours.end_time)
+
+                while current_time <= end_time:
+                    if current_time.hour == 12:  # Skip lunch hour
+                        current_time = current_time.replace(hour=13, minute=0)
+                        continue
+
+                    slot_time = timezone.make_aware(current_time, shop_tz)
 
                     # Only apply the 10-minute buffer for today's appointments
                     if not is_next_day:
                         if slot_time <= current_datetime + timedelta(minutes=10):
+                            current_time = current_time + timedelta(minutes=10)
                             continue
 
                     # Format the time slot
                     formatted_time = slot_time.strftime("%I:%M %p")
                     time_slots.append(formatted_time)
+                    current_time = current_time + timedelta(minutes=10)
 
             # Remove booked slots
             booked_slots = ServiceRequest.objects.filter(
                 appointment_date=requested_date
             ).values_list("appointment_time", flat=True)
+            booked_slots = [slot.strftime("%I:%M %p") for slot in booked_slots]
 
             available_slots = [slot for slot in time_slots if slot not in booked_slots]
 
@@ -288,6 +358,12 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
             return Response(
                 {"error": "Invalid date format. Use YYYY-MM-DD"},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            logger.error(f"Error generating available slots: {e}")
+            return Response(
+                {"error": "Failed to generate available slots"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
     @action(detail=False, methods=["get"], url_path="pending/count")
