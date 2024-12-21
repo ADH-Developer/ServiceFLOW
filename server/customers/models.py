@@ -105,27 +105,68 @@ class ServiceRequest(models.Model):
                     )
 
     def update_cache_and_notify(self):
-        """Update cache and send WebSocket notification"""
         try:
-            # Get new count
-            count = ServiceRequest.objects.filter(status="pending").count()
+            logger.info("Starting update_cache_and_notify")
+            # Get new pending count
+            pending_count = ServiceRequest.objects.filter(status="pending").count()
+            logger.info(f"Got pending count: {pending_count}")
+
+            # Get today's appointments
+            from datetime import date
+
+            from .serializers import ServiceRequestSerializer
+
+            today = date.today()
+            today_appointments = (
+                ServiceRequest.objects.filter(
+                    appointment_date=today
+                )  # Remove status filter
+                .select_related("customer__user", "vehicle")
+                .prefetch_related("services")
+                .order_by("appointment_time")
+            )
+
+            serializer = ServiceRequestSerializer(today_appointments, many=True)
+            appointments_data = serializer.data
 
             # Update cache
             try:
-                cache.set("pending_appointments_count", count, 300)
+                logger.info("Updating cache...")
+                cache.set("pending_appointments_count", pending_count, 300)
+                cache.set("today_appointments", appointments_data, 300)
+                logger.info("Cache updated successfully")
             except Exception as e:
                 logger.error(f"Error updating cache: {e}")
 
-            # Send WebSocket notification
+            # Send WebSocket notifications
             try:
+                logger.info("Sending WebSocket notifications...")
                 channel_layer = get_channel_layer()
+
+                # Send pending count update
                 async_to_sync(channel_layer.group_send)(
-                    "appointments", {"type": "appointment_update", "count": count}
+                    "appointments",
+                    {
+                        "type": "appointment_update",
+                        "message_type": "pending_count",
+                        "count": pending_count,
+                    },
                 )
+
+                # Send today's appointments update
+                async_to_sync(channel_layer.group_send)(
+                    "appointments",
+                    {
+                        "type": "appointment_update",
+                        "message_type": "today_appointments",
+                        "appointments": appointments_data,
+                    },
+                )
+                logger.info("Sent today's appointments update")
             except Exception as e:
                 logger.error(f"Error sending WebSocket notification: {e}")
 
-            return count
+            return pending_count
         except Exception as e:
             logger.error(f"Error in update_cache_and_notify: {e}")
             return None

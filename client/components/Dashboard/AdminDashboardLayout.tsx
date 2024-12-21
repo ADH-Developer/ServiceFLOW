@@ -88,39 +88,45 @@ interface NavItemProps extends FlexProps {
 }
 
 const NavItem = ({ icon, path, children, ...rest }: NavItemProps) => {
+    const router = useRouter();
+
     return (
-        <Link href={path} style={{ textDecoration: 'none' }} passHref>
-            <Box
-                as="div"
-                width="100%"
+        <Box
+            as="a"
+            href={path}
+            onClick={(e) => {
+                e.preventDefault();
+                router.push(path);
+            }}
+            width="100%"
+            style={{ textDecoration: 'none' }}
+        >
+            <Flex
+                align="center"
+                p="4"
+                mx="4"
+                borderRadius="lg"
+                role="group"
+                cursor="pointer"
+                _hover={{
+                    bg: 'cyan.400',
+                    color: 'white',
+                }}
+                {...rest}
             >
-                <Flex
-                    align="center"
-                    p="4"
-                    mx="4"
-                    borderRadius="lg"
-                    role="group"
-                    cursor="pointer"
-                    _hover={{
-                        bg: 'cyan.400',
-                        color: 'white',
-                    }}
-                    {...rest}
-                >
-                    {icon && (
-                        <Icon
-                            mr="4"
-                            fontSize="16"
-                            _groupHover={{
-                                color: 'white',
-                            }}
-                            as={icon}
-                        />
-                    )}
-                    {children}
-                </Flex>
-            </Box>
-        </Link>
+                {icon && (
+                    <Icon
+                        mr="4"
+                        fontSize="16"
+                        _groupHover={{
+                            color: 'white',
+                        }}
+                        as={icon}
+                    />
+                )}
+                {children}
+            </Flex>
+        </Box>
     );
 };
 
