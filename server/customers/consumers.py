@@ -6,6 +6,8 @@ from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.core.cache import cache
 
+from .cache import WorkflowCache
+
 logger = logging.getLogger(__name__)
 
 
@@ -94,3 +96,88 @@ class AppointmentConsumer(AsyncWebsocketConsumer):
                 )
         except Exception as e:
             logger.error(f"Error in appointment_update: {e}")
+
+
+class WorkflowConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        # Add to workflow group
+        await self.channel_layer.group_add("workflow", self.channel_name)
+        await self.accept()
+
+        # Send initial board state
+        board_state = await database_sync_to_async(WorkflowCache.get_board_state)()
+        await self.send(
+            text_data=json.dumps({"type": "board_update", "board": board_state})
+        )
+
+    async def disconnect(self, close_code):
+        # Remove from workflow group
+        await self.channel_layer.group_discard("workflow", self.channel_name)
+
+    async def receive(self, text_data):
+        """Handle incoming messages (not used for now)"""
+        pass
+
+    async def board_update(self, event):
+        """Send board updates to clients"""
+        await self.send(
+            text_data=json.dumps({"type": "board_update", "board": event["board"]})
+        )
+
+    async def card_move(self, event):
+        """Send card move updates to clients"""
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "card_move",
+                    "card_id": event["card_id"],
+                    "from_column": event["from_column"],
+                    "to_column": event["to_column"],
+                    "position": event["position"],
+                }
+            )
+        )
+
+    async def card_update(self, event):
+        """Send card data updates to clients"""
+        await self.send(
+            text_data=json.dumps({"type": "card_update", "card": event["card"]})
+        )
+
+    async def column_update(self, event):
+        """Send column setting updates to clients"""
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "column_update",
+                    "column": event["column"],
+                    "settings": event["settings"],
+                }
+            )
+        )
+
+    async def comment_update(self, event):
+        """Send comment updates to clients"""
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "comment_update",
+                    "card_id": event["card_id"],
+                    "comment": event["comment"],
+                    "action": event["action"],  # 'add' or 'delete'
+                }
+            )
+        )
+
+    async def label_update(self, event):
+        """Send label updates to clients"""
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "label_update",
+                    "card_id": event["card_id"],
+                    "label": event["label"],
+                    "action": event["action"],  # 'add' or 'remove'
+                }
+            )
+        )

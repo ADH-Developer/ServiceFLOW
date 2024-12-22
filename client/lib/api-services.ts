@@ -124,10 +124,59 @@ export const customersApi = {
     logout: () => {
         localStorage.removeItem('accessToken');
         localStorage.removeItem('refreshToken');
+        localStorage.removeItem('userData');
     }
 };
 
-const appointmentsApi = {
+export const workflowApi = {
+    getBoardState: async () => {
+        const response = await apiClient.get('/api/customers/workflow/');
+        return response.data;
+    },
+
+    moveCard: async (cardId: string | number, toColumn: string, position: number) => {
+        const response = await apiClient.post(`/api/customers/workflow/${cardId}/move_card/`, {
+            to_column: toColumn,
+            position: position,
+        });
+        return response.data;
+    },
+
+    getComments: async (cardId: string | number) => {
+        const response = await apiClient.get(`/api/customers/workflow/${cardId}/comments/`);
+        return response.data;
+    },
+
+    addComment: async (cardId: string | number, text: string) => {
+        const response = await apiClient.post(`/api/customers/workflow/${cardId}/comments/`, {
+            text,
+        });
+        return response.data;
+    },
+
+    deleteComment: async (cardId: string | number, commentId: number) => {
+        const response = await apiClient.delete(
+            `/api/customers/workflow/${cardId}/comments/${commentId}/`
+        );
+        return response.data;
+    },
+
+    addLabel: async (cardId: string | number, label: string) => {
+        const response = await apiClient.post(`/api/customers/workflow/${cardId}/labels/`, {
+            label,
+        });
+        return response.data;
+    },
+
+    removeLabel: async (cardId: string | number, label: string) => {
+        const response = await apiClient.delete(
+            `/api/customers/workflow/${cardId}/labels/${label}/`
+        );
+        return response.data;
+    }
+};
+
+export const appointmentsApi = {
     getPendingCount: async () => {
         const response = await apiClient.get('/api/customers/service-requests/pending/count/');
         return response.data;
@@ -148,5 +197,3 @@ const appointmentsApi = {
         return response.data;
     }
 };
-
-export { appointmentsApi };

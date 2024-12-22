@@ -43,6 +43,7 @@ const ServiceAdvisorLinks: Array<LinkItemProps> = [
     { name: 'Dashboard', icon: FiHome, path: '/admin/dashboard' },
     { name: 'Schedule', icon: FiCalendar, path: '/admin/schedule' },
     { name: 'Appointments', icon: FiClipboard, path: '/admin/appointments' },
+    { name: 'Workflow', icon: FiClipboard, path: '/admin/workflow' },
     { name: 'Customers', icon: FiUsers, path: '/admin/customers' },
     { name: 'Settings', icon: FiSettings, path: '/admin/settings' },
 ];

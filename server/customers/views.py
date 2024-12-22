@@ -3,17 +3,30 @@ import zoneinfo
 from datetime import datetime, time, timedelta
 
 from django.contrib.auth import authenticate
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .cache import AppointmentCache
-from .models import BusinessHours, CustomerProfile, ServiceItem, ServiceRequest
-from .serializers import CustomerProfileSerializer, ServiceRequestSerializer
+from .cache import AppointmentCache, WorkflowCache
+from .models import (
+    BusinessHours,
+    Comment,
+    CustomerProfile,
+    Label,
+    ServiceItem,
+    ServiceRequest,
+)
+from .serializers import (
+    CommentSerializer,
+    CustomerProfileSerializer,
+    LabelSerializer,
+    ServiceRequestSerializer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -393,3 +406,182 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
         )
         serializer = self.get_serializer(appointments, many=True)
         return Response(serializer.data)
+
+
+class WorkflowViewSet(viewsets.ViewSet):
+    """
+    ViewSet for workflow board operations
+    """
+
+    permission_classes = [IsAuthenticated, IsAdminUser]  # Only staff can access
+
+    def list(self, request):
+        """Get the current board state"""
+        try:
+            # Get board state from cache/DB
+            board_state = WorkflowCache.get_board_state()
+
+            # Get full service request data for each ID
+            columns = {}
+            for column, request_ids in board_state.items():
+                requests = ServiceRequest.objects.filter(id__in=request_ids)
+                serializer = ServiceRequestSerializer(requests, many=True)
+                columns[column] = serializer.data
+
+            return Response(
+                {
+                    "columns": columns,
+                    "column_order": [
+                        c[0] for c in ServiceRequest.WORKFLOW_COLUMN_CHOICES
+                    ],
+                }
+            )
+
+        except Exception as e:
+            return Response(
+                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=["post"])
+    def move_card(self, request, pk=None):
+        """Move a card to a new position/column"""
+        try:
+            service_request = ServiceRequest.objects.get(pk=pk)
+
+            # Validate input
+            to_column = request.data.get("to_column")
+            position = request.data.get("position", 0)
+
+            if not to_column:
+                return Response(
+                    {"error": "to_column is required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Update the model
+            with transaction.atomic():
+                # Get next position if not specified
+                if position is None:
+                    position = WorkflowCache.get_next_position(to_column)
+
+                # Update model
+                service_request.workflow_column = to_column
+                service_request.workflow_position = position
+                service_request.save()
+
+                # Update cache
+                WorkflowCache.move_card(service_request.id, to_column, position)
+
+                # Serialize response
+                serializer = ServiceRequestSerializer(service_request)
+                return Response(serializer.data)
+
+        except ServiceRequest.DoesNotExist:
+            return Response(
+                {"error": "Service request not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+        except ValidationError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response(
+                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=["post"])
+    def comments(self, request, pk=None):
+        """Add a comment to a service request"""
+        try:
+            service_request = ServiceRequest.objects.get(pk=pk)
+            text = request.data.get("text")
+
+            if not text:
+                return Response(
+                    {"error": "Comment text is required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            comment = Comment.objects.create(
+                service_request=service_request, user=request.user, text=text
+            )
+
+            serializer = CommentSerializer(comment)
+            return Response(serializer.data)
+
+        except ServiceRequest.DoesNotExist:
+            return Response(
+                {"error": "Service request not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=["delete"])
+    def delete_comment(self, request, pk=None, comment_pk=None):
+        """Delete a comment"""
+        try:
+            comment = Comment.objects.get(pk=comment_pk, service_request_id=pk)
+
+            # Only allow comment deletion by the comment author or staff
+            if comment.user != request.user and not request.user.is_staff:
+                return Response(
+                    {"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN
+                )
+
+            comment.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        except Comment.DoesNotExist:
+            return Response(
+                {"error": "Comment not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=["post"])
+    def labels(self, request, pk=None):
+        """Add a label to a service request"""
+        try:
+            service_request = ServiceRequest.objects.get(pk=pk)
+            label_name = request.data.get("label")
+
+            if not label_name:
+                return Response(
+                    {"error": "Label name is required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            label, created = Label.objects.get_or_create(
+                service_request=service_request, name=label_name
+            )
+
+            serializer = LabelSerializer(label)
+            return Response(serializer.data)
+
+        except ServiceRequest.DoesNotExist:
+            return Response(
+                {"error": "Service request not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=["delete"])
+    def delete_label(self, request, pk=None, label_name=None):
+        """Delete a label"""
+        try:
+            label = Label.objects.get(service_request_id=pk, name=label_name)
+            label.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        except Label.DoesNotExist:
+            return Response(
+                {"error": "Label not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

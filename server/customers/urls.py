@@ -7,6 +7,7 @@ router = DefaultRouter()
 router.register(
     r"service-requests", views.ServiceRequestViewSet, basename="service-request"
 )
+router.register(r"workflow", views.WorkflowViewSet, basename="workflow")
 
 urlpatterns = [
     path("register/", views.register_customer, name="register"),

@@ -6,7 +6,14 @@ from django.core.validators import validate_email
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import CustomerProfile, ServiceItem, ServiceRequest, Vehicle
+from .models import (
+    Comment,
+    CustomerProfile,
+    Label,
+    ServiceItem,
+    ServiceRequest,
+    Vehicle,
+)
 
 
 class VehicleSerializer(serializers.ModelSerializer):
@@ -100,9 +107,28 @@ class ServiceItemSerializer(serializers.ModelSerializer):
         fields = ["service_type", "description", "urgency"]
 
 
+class CommentSerializer(serializers.ModelSerializer):
+    user = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Comment
+        fields = ["id", "text", "user", "created_at"]
+
+    def get_user(self, obj):
+        return f"{obj.user.first_name} {obj.user.last_name}"
+
+
+class LabelSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Label
+        fields = ["name", "created_at"]
+
+
 class ServiceRequestSerializer(serializers.ModelSerializer):
     services = ServiceItemSerializer(many=True)
     vehicle = VehicleSerializer()
+    comments = CommentSerializer(many=True, read_only=True)
+    labels = LabelSerializer(many=True, read_only=True)
 
     class Meta:
         model = ServiceRequest
@@ -114,8 +140,20 @@ class ServiceRequestSerializer(serializers.ModelSerializer):
             "appointment_time",
             "status",
             "created_at",
+            "workflow_column",
+            "workflow_position",
+            "workflow_history",
+            "comments",
+            "labels",
         ]
-        read_only_fields = ["id", "status", "created_at"]
+        read_only_fields = [
+            "id",
+            "status",
+            "created_at",
+            "workflow_history",
+            "comments",
+            "labels",
+        ]
 
     def validate_vehicle(self, value):
         if not all(k in value for k in ("make", "model", "year")):
@@ -142,6 +180,14 @@ class ServiceRequestSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     "Service urgency must be 'low', 'medium', or 'high'"
                 )
+        return value
+
+    def validate_workflow_column(self, value):
+        valid_columns = dict(ServiceRequest.WORKFLOW_COLUMN_CHOICES)
+        if value not in valid_columns:
+            raise serializers.ValidationError(
+                f"Invalid workflow column. Must be one of: {', '.join(valid_columns.keys())}"
+            )
         return value
 
     def create(self, validated_data):

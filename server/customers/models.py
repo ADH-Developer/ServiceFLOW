@@ -6,6 +6,7 @@ from django.contrib.auth.models import Group, User
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.utils import timezone
 
 from .cache import AppointmentCache
 
@@ -63,14 +64,40 @@ class ServiceRequest(models.Model):
         ("cancelled", "Cancelled"),
     ]
 
+    WORKFLOW_COLUMN_CHOICES = [
+        ("estimates", "Estimates"),
+        ("in_progress", "In Progress"),
+        ("waiting_parts", "Waiting on Parts"),
+        ("completed", "Completed"),
+    ]
+
     customer = models.ForeignKey(CustomerProfile, on_delete=models.CASCADE)
     vehicle = models.ForeignKey(Vehicle, on_delete=models.CASCADE)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    workflow_column = models.CharField(
+        max_length=20,
+        choices=WORKFLOW_COLUMN_CHOICES,
+        default="estimates",
+        db_index=True,  # Add index for faster column filtering
+    )
+    workflow_position = models.IntegerField(
+        default=0,
+        db_index=True,  # Add index for faster ordering
+    )
+    workflow_history = models.JSONField(default=list, blank=True)
     appointment_date = models.DateField()
     appointment_time = models.TimeField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     after_hours_dropoff = models.BooleanField(default=False)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["workflow_column", "workflow_position"]
+            ),  # Composite index for column+position queries
+        ]
+        ordering = ["workflow_column", "workflow_position"]  # Default ordering
 
     def __str__(self):
         return f"{self.customer} - {self.appointment_date} {self.appointment_time}"
@@ -174,21 +201,50 @@ class ServiceRequest(models.Model):
     def save(self, *args, **kwargs):
         self.clean()  # Run validation before saving
 
-        # Check if status is changing
+        # Check if workflow column is changing
         if self.pk:
             try:
                 old_instance = ServiceRequest.objects.get(pk=self.pk)
-                status_changed = old_instance.status != self.status
+                if old_instance.workflow_column != self.workflow_column:
+                    # Add to history
+                    if not isinstance(self.workflow_history, list):
+                        self.workflow_history = []
+
+                    self.workflow_history.append(
+                        {
+                            "from_column": old_instance.workflow_column,
+                            "to_column": self.workflow_column,
+                            "timestamp": timezone.now().isoformat(),
+                        }
+                    )
+
+                    # Validate workflow transitions
+                    if (
+                        old_instance.workflow_column == "completed"
+                        and self.workflow_column != "completed"
+                    ):
+                        raise ValidationError(
+                            "Cannot move items out of completed column"
+                        )
+
+                    # Auto-update status based on workflow column
+                    if self.workflow_column == "completed":
+                        self.status = "completed"
+                    elif self.workflow_column == "in_progress":
+                        self.status = "in_progress"
+                    elif self.workflow_column == "waiting_parts":
+                        self.status = "in_progress"
+                    elif self.workflow_column == "estimates":
+                        self.status = "confirmed"
+
             except ServiceRequest.DoesNotExist:
-                status_changed = True
-        else:
-            status_changed = True  # New instance
+                pass  # New instance
 
         # Save the instance
         super().save(*args, **kwargs)
 
         # Update cache if status changed
-        if status_changed:
+        if "status_changed" in locals() and status_changed:
             self.update_cache_and_notify()
 
     def delete(self, *args, **kwargs):
@@ -216,7 +272,6 @@ class BusinessHours(models.Model):
     allow_after_hours_dropoff = models.BooleanField(default=False)
 
     class Meta:
-        verbose_name = "Business Hours"
         verbose_name_plural = "Business Hours"
         ordering = ["day_of_week"]
 
@@ -250,3 +305,33 @@ class BusinessHours(models.Model):
             return within_hours, business_hours.allow_after_hours_dropoff
         except cls.DoesNotExist:
             return False, False
+
+
+class Comment(models.Model):
+    service_request = models.ForeignKey(
+        "ServiceRequest", on_delete=models.CASCADE, related_name="comments"
+    )
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    text = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Comment by {self.user} on {self.service_request}"
+
+
+class Label(models.Model):
+    service_request = models.ForeignKey(
+        "ServiceRequest", on_delete=models.CASCADE, related_name="labels"
+    )
+    name = models.CharField(max_length=50)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ["service_request", "name"]
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
