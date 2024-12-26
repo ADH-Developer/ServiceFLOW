@@ -198,6 +198,16 @@ class ServiceRequest(models.Model):
             logger.error(f"Error in update_cache_and_notify: {e}")
             return None
 
+    def validate_workflow_transition(self, old_column, new_column):
+        """Validate workflow column transitions"""
+        if old_column == "completed" and new_column != "completed":
+            from rest_framework.exceptions import ValidationError
+
+            raise ValidationError(
+                "Items in the completed column cannot be moved back to other columns. "
+                "This is to maintain the integrity of the workflow history."
+            )
+
     def save(self, *args, **kwargs):
         self.clean()  # Run validation before saving
 
@@ -206,6 +216,11 @@ class ServiceRequest(models.Model):
             try:
                 old_instance = ServiceRequest.objects.get(pk=self.pk)
                 if old_instance.workflow_column != self.workflow_column:
+                    # Validate workflow transitions
+                    self.validate_workflow_transition(
+                        old_instance.workflow_column, self.workflow_column
+                    )
+
                     # Add to history
                     if not isinstance(self.workflow_history, list):
                         self.workflow_history = []
@@ -217,15 +232,6 @@ class ServiceRequest(models.Model):
                             "timestamp": timezone.now().isoformat(),
                         }
                     )
-
-                    # Validate workflow transitions
-                    if (
-                        old_instance.workflow_column == "completed"
-                        and self.workflow_column != "completed"
-                    ):
-                        raise ValidationError(
-                            "Cannot move items out of completed column"
-                        )
 
                     # Auto-update status based on workflow column
                     if self.workflow_column == "completed":

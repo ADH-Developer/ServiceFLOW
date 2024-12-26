@@ -18,6 +18,17 @@ interface BoardState {
     [key: string]: ServiceRequest[];
 }
 
+interface WebSocketMessage {
+    type: string;
+    card_id?: string | number;
+    from_column?: string;
+    to_column?: string;
+    new_position?: number;
+    board?: any;
+    success?: boolean;
+    message?: string;
+}
+
 const COLUMN_COLORS = {
     estimates: 'cyan.400',
     in_progress: 'green.400',
@@ -92,7 +103,6 @@ const WorkflowBoard: React.FC = () => {
     const [activeId, setActiveId] = useState<string | null>(null);
     const [selectedCard, setSelectedCard] = useState<ServiceRequest | null>(null);
     const [isCardDetailOpen, setIsCardDetailOpen] = useState(false);
-    const [websocket, setWebsocket] = useState<WebSocket | null>(null);
     const toast = useToast();
     const [retryState, setRetryState] = useState<RetryState>({
         isRetrying: false,
@@ -104,7 +114,33 @@ const WorkflowBoard: React.FC = () => {
     });
 
     // Initialize WebSocket connection
-    const { lastMessage, sendMessage } = useWebSocket('workflow');
+    const { isConnected, error: wsError, sendMessage, subscribe } = useWebSocket('workflow');
+
+    // Subscribe to WebSocket messages
+    useEffect(() => {
+        subscribe((data: WebSocketMessage) => {
+            switch (data.type) {
+                case 'board_update':
+                    if (data.board && typeof data.board === 'object') {
+                        setBoardState(transformBoardData(data.board));
+                    }
+                    break;
+                case 'card_move':
+                    if (data.success && data.board && typeof data.board === 'object') {
+                        setBoardState(transformBoardData(data.board));
+                    } else {
+                        toast({
+                            title: 'Error moving card',
+                            description: data.message || 'Failed to move card',
+                            status: 'error',
+                            duration: 3000,
+                            isClosable: true,
+                        });
+                    }
+                    break;
+            }
+        });
+    }, [subscribe, toast]);
 
     // Load initial board state
     useEffect(() => {
@@ -135,90 +171,6 @@ const WorkflowBoard: React.FC = () => {
 
         fetchBoardState();
     }, [toast]);
-
-    // Handle WebSocket messages
-    useEffect(() => {
-        if (lastMessage) {
-            try {
-                const data = JSON.parse(lastMessage.data);
-                switch (data.type) {
-                    case 'board_update':
-                        if (data.board && typeof data.board === 'object') {
-                            setBoardState(transformBoardData(data.board));
-                        }
-                        break;
-                    case 'card_move':
-                        // Update local state to match server state
-                        if (data.success && data.board && typeof data.board === 'object') {
-                            setBoardState(transformBoardData(data.board));
-                        } else {
-                            toast({
-                                title: 'Error moving card',
-                                description: data.message || 'Failed to move card',
-                                status: 'error',
-                                duration: 3000,
-                                isClosable: true,
-                            });
-                        }
-                        break;
-                }
-            } catch (error) {
-                console.error('Error processing WebSocket message:', error);
-            }
-        }
-    }, [lastMessage, toast]);
-
-    useEffect(() => {
-        // Initialize WebSocket connection
-        const ws = new WebSocket(`${process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000'}/ws/workflow/`);
-
-        ws.onopen = () => {
-            console.log('WebSocket connected');
-            setWebsocket(ws);
-        };
-
-        ws.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                if (typeof data === 'object') {
-                    handleWebSocketMessage(data);
-                }
-            } catch (error) {
-                console.error('Error parsing WebSocket message:', error);
-            }
-        };
-
-        ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
-        };
-
-        ws.onclose = () => {
-            console.log('WebSocket disconnected');
-            setWebsocket(null);
-        };
-
-        return () => {
-            ws.close();
-        };
-    }, []);
-
-    const handleWebSocketMessage = (data: any) => {
-        if (!data || typeof data !== 'object') return;
-
-        switch (data.type) {
-            case 'board_update':
-                if (data.board && typeof data.board === 'object') {
-                    setBoardState(transformBoardData(data.board));
-                }
-                break;
-            case 'card_move':
-                if (data.success && data.board && typeof data.board === 'object') {
-                    setBoardState(transformBoardData(data.board));
-                }
-                break;
-            // Add other cases as needed
-        }
-    };
 
     const handleDragStart = (event: DragStartEvent) => {
         setActiveId(event.active.id as string);
@@ -283,12 +235,15 @@ const WorkflowBoard: React.FC = () => {
 
         if (!over) return;
 
-        const cardId = active.id;
-        const sourceColumn = active.data.current?.column;
-        const destinationColumn = over.id;
+        const cardId = active.id.toString();
+        const sourceColumn = active.data.current?.column as string;
+        const destinationColumn = over.id as string;
 
         // If dropped in the same place
         if (sourceColumn === destinationColumn) return;
+
+        // Store the original board state before optimistic update
+        const originalBoardState = { ...boardState };
 
         try {
             // Optimistically update the UI
@@ -312,41 +267,42 @@ const WorkflowBoard: React.FC = () => {
 
             // Notify other clients via WebSocket
             if (sendMessage) {
-                sendMessage(JSON.stringify({
+                sendMessage({
                     type: 'card_moved',
                     card_id: cardId,
                     from_column: sourceColumn,
                     to_column: destinationColumn,
                     new_position: destCards.length - 1,
-                }));
+                });
             }
 
-        } catch (error) {
+        } catch (error: any) {
             console.error('Error moving card:', error);
 
-            // Set up retry state
-            setRetryState({
-                isRetrying: false,
-                retryCount: 0,
-                operation: 'move',
-                cardId: cardId.toString(),
-                sourceColumn,
-                targetColumn: destinationColumn
-            });
+            // Revert to original board state
+            setBoardState(originalBoardState);
+
+            // Extract error message from the response
+            let errorMessage = 'Failed to update card position.';
+            if (error?.response?.data?.error) {
+                errorMessage = error.response.data.error;
+            }
 
             toast({
                 title: 'Error moving card',
                 description: (
                     <Box>
-                        <Text mb={2}>Failed to update card position.</Text>
-                        <Button
-                            size="sm"
-                            onClick={retryOperation}
-                            isLoading={retryState.isRetrying}
-                            loadingText="Retrying..."
-                        >
-                            Retry
-                        </Button>
+                        <Text mb={2}>{errorMessage}</Text>
+                        {!errorMessage.includes('completed column') && (
+                            <Button
+                                size="sm"
+                                onClick={retryOperation}
+                                isLoading={retryState.isRetrying}
+                                loadingText="Retrying..."
+                            >
+                                Retry
+                            </Button>
+                        )}
                     </Box>
                 ),
                 status: 'error',
@@ -354,15 +310,16 @@ const WorkflowBoard: React.FC = () => {
                 isClosable: true,
             });
 
-            try {
-                // Refresh board state from server
-                const data = await workflowApi.getBoardState();
-                if (data && typeof data === 'object') {
-                    setBoardState(transformBoardData(data));
-                }
-            } catch (refreshError) {
-                console.error('Error refreshing board state:', refreshError);
-                setError('Failed to refresh board state. Please reload the page.');
+            // Only set up retry state if it's not a completed column error
+            if (!errorMessage.includes('completed column')) {
+                setRetryState({
+                    isRetrying: false,
+                    retryCount: 0,
+                    operation: 'move',
+                    cardId: cardId,
+                    sourceColumn,
+                    targetColumn: destinationColumn
+                });
             }
         }
     };
@@ -433,7 +390,7 @@ const WorkflowBoard: React.FC = () => {
                     serviceRequest={selectedCard}
                     isOpen={isCardDetailOpen}
                     onClose={() => setIsCardDetailOpen(false)}
-                    websocket={websocket}
+                    websocket={isConnected}
                 />
             )}
         </>

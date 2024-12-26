@@ -103,6 +103,7 @@ const AdminDashboard = () => {
     const { activeTab } = useTab();
     const [error, setError] = useState<string | null>(null);
     const wsRef = useRef<WebSocket | null>(null);
+    const isMountedRef = useRef(true);
 
     const fetchDashboardData = async () => {
         try {
@@ -126,13 +127,17 @@ const AdminDashboard = () => {
         const ws = new WebSocket(WS_URL);
 
         ws.onopen = () => {
-            console.log('WebSocket connected successfully');
+            if (isMountedRef.current) {
+                console.log('WebSocket connected successfully');
+            }
         };
 
         ws.onmessage = (event) => {
             try {
                 console.log('WebSocket message received:', event.data);
                 const data = JSON.parse(event.data) as WebSocketMessage;
+
+                if (!isMountedRef.current) return;
 
                 if (data.type === 'pending_count' && typeof data.count === 'number') {
                     setPendingCount(data.count);
@@ -145,19 +150,25 @@ const AdminDashboard = () => {
         };
 
         ws.onclose = () => {
-            console.log('WebSocket connection closed, attempting reconnect...');
-            setTimeout(connectWebSocket, 5000);
+            if (isMountedRef.current) {
+                console.log('WebSocket connection closed, attempting reconnect...');
+                setTimeout(connectWebSocket, 5000);
+            }
         };
 
         ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
-            ws.close();
+            if (isMountedRef.current) {
+                console.error('WebSocket error:', error);
+                ws.close();
+            }
         };
 
         wsRef.current = ws;
     };
 
     useEffect(() => {
+        isMountedRef.current = true;
+
         const checkAuthAndFetchData = async () => {
             const token = localStorage.getItem('accessToken');
             const userData = localStorage.getItem('userData');
@@ -186,6 +197,7 @@ const AdminDashboard = () => {
         checkAuthAndFetchData();
 
         return () => {
+            isMountedRef.current = false;
             if (wsRef.current) {
                 wsRef.current.close();
             }
