@@ -2,7 +2,14 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import User
 
-from .models import BusinessHours, CustomerProfile, ServiceItem, ServiceRequest, Vehicle
+from .models import (
+    BusinessHours,
+    CustomerProfile,
+    ServiceItem,
+    ServiceRequest,
+    SystemSettings,
+    Vehicle,
+)
 
 
 class BusinessHoursAdmin(admin.ModelAdmin):
@@ -31,8 +38,30 @@ class BusinessHoursAdmin(admin.ModelAdmin):
         return False
 
 
+class SystemSettingsAdmin(admin.ModelAdmin):
+    list_display = ("auto_confirm_appointments", "updated_at")
+    readonly_fields = ("updated_at",)
+
+    def has_add_permission(self, request):
+        # Only allow adding if no instance exists
+        return not SystemSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        # Prevent deletion of the settings
+        return False
+
+
+# Register models
 admin.site.register(BusinessHours, BusinessHoursAdmin)
 admin.site.register(CustomerProfile)
 admin.site.register(Vehicle)
 admin.site.register(ServiceRequest)
 admin.site.register(ServiceItem)
+
+# Ensure SystemSettings is registered last
+(
+    admin.site.unregister(SystemSettings)
+    if SystemSettings in admin.site._registry
+    else None
+)
+admin.site.register(SystemSettings, SystemSettingsAdmin)

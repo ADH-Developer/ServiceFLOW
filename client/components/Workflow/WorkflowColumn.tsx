@@ -6,8 +6,9 @@ import {
     useColorModeValue,
 } from '@chakra-ui/react';
 import { useDroppable } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import type { ServiceRequest } from '../../types/service-request';
-import WorkflowCard from './WorkflowCard';
+import SortableCard from './SortableCard';
 
 interface WorkflowColumnProps {
     id: string;
@@ -32,17 +33,6 @@ const WorkflowColumn: React.FC<WorkflowColumnProps> = ({
         id: id,
     });
 
-    // Format title for display
-    const displayTitle = title
-        .split('_')
-        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-        .join(' ');
-
-    const handleCardClick = (card: ServiceRequest) => {
-        // Ensure the click handler is called with the card
-        onCardClick(card);
-    };
-
     return (
         <Box
             width="300px"
@@ -61,7 +51,7 @@ const WorkflowColumn: React.FC<WorkflowColumnProps> = ({
                 borderBottom="3px solid"
                 borderColor={color}
             >
-                {displayTitle}
+                {title}
                 <Box as="span" ml={2} color="gray.500" fontSize="sm">
                     ({cards.length})
                 </Box>
@@ -77,14 +67,19 @@ const WorkflowColumn: React.FC<WorkflowColumnProps> = ({
                 borderRadius="md"
                 p={2}
             >
-                {cards.map((serviceRequest) => (
-                    <WorkflowCard
-                        key={serviceRequest.id}
-                        serviceRequest={serviceRequest}
-                        column={id}
-                        onClick={() => handleCardClick(serviceRequest)}
-                    />
-                ))}
+                <SortableContext
+                    items={cards.map(card => card.id.toString())}
+                    strategy={verticalListSortingStrategy}
+                >
+                    {cards.map((serviceRequest) => (
+                        <SortableCard
+                            key={serviceRequest.id}
+                            serviceRequest={serviceRequest}
+                            column={id}
+                            onClick={() => onCardClick(serviceRequest)}
+                        />
+                    ))}
+                </SortableContext>
             </VStack>
         </Box>
     );

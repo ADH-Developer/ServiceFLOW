@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Flex, useToast, Spinner, Text, Center, Button } from '@chakra-ui/react';
+import { Box, Flex, useToast, Spinner, Text, Center } from '@chakra-ui/react';
 import {
     DndContext,
     DragEndEvent,
@@ -8,23 +8,16 @@ import {
     closestCorners,
     defaultDropAnimation,
 } from '@dnd-kit/core';
+import { arrayMove } from '@dnd-kit/sortable';
 import { useSocketIO } from '../../hooks/useSocketIO';
 import WorkflowColumn from './WorkflowColumn';
 import type { ServiceRequest } from '../../types/service-request';
 import { workflowApi } from '../../lib/api-services';
 import CardDetail from './CardDetail';
+import SortableCard from './SortableCard';
 
 interface BoardState {
     [key: string]: ServiceRequest[];
-}
-
-interface RetryState {
-    isRetrying: boolean;
-    retryCount: number;
-    operation: 'move' | null;
-    cardId: string | null;
-    sourceColumn: string | null;
-    targetColumn: string | null;
 }
 
 const COLUMN_COLORS = {
@@ -48,20 +41,13 @@ const WorkflowBoard: React.FC = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [activeId, setActiveId] = useState<string | null>(null);
+    const [activeCard, setActiveCard] = useState<ServiceRequest | null>(null);
     const [selectedCard, setSelectedCard] = useState<ServiceRequest | null>(null);
     const [isCardDetailOpen, setIsCardDetailOpen] = useState(false);
     const toast = useToast();
-    const [retryState, setRetryState] = useState<RetryState>({
-        isRetrying: false,
-        retryCount: 0,
-        operation: null,
-        cardId: null,
-        sourceColumn: null,
-        targetColumn: null
-    });
 
     // Initialize Socket.IO connection
-    const { isConnected, error: socketError, emit, on, socket } = useSocketIO('workflow');
+    const { isConnected, error: socketError, emit, on } = useSocketIO('workflow');
 
     // Subscribe to Socket.IO messages
     useEffect(() => {
@@ -95,9 +81,9 @@ const WorkflowBoard: React.FC = () => {
     useEffect(() => {
         const loadBoardState = async () => {
             try {
-                const data = await workflowApi.getBoard();
-                setBoardState(transformBoardData(data.board));
-                setColumnOrder(data.column_order || Object.keys(data.board));
+                const data = await workflowApi.getBoardState();
+                setBoardState(transformBoardData(data.columns));
+                setColumnOrder(data.column_order || Object.keys(data.columns));
                 setError(null);
             } catch (err) {
                 console.error('Error loading board state:', err);
@@ -111,26 +97,150 @@ const WorkflowBoard: React.FC = () => {
     }, []);
 
     const handleDragStart = (event: DragStartEvent) => {
-        setActiveId(event.active.id.toString());
+        const { active } = event;
+        setActiveId(active.id.toString());
+
+        // Find the card being dragged
+        const column = (active.data.current as any)?.column;
+        if (column && boardState[column]) {
+            const card = boardState[column].find(
+                card => card.id.toString() === active.id.toString()
+            );
+            setActiveCard(card || null);
+        }
     };
 
-    const handleDragEnd = (event: DragEndEvent) => {
+    const handleDragEnd = async (event: DragEndEvent) => {
         const { active, over } = event;
         setActiveId(null);
+        setActiveCard(null);
 
         if (!over) return;
 
         const cardId = active.id.toString();
-        const sourceColumn = active.data.current?.sortable.containerId;
-        const targetColumn = over.id.toString();
+        const sourceColumn = (active.data.current as any)?.column;
 
-        if (sourceColumn === targetColumn) return;
+        // Get the actual target column - either from the card's data or the column itself
+        const overData = over.data.current as any;
+        const targetColumn = overData?.column || over.id.toString();
 
-        emit('card_move', {
-            card_id: cardId,
-            from_column: sourceColumn,
-            to_column: targetColumn
-        });
+        // Validate that both source and target columns are valid
+        const validColumns = ["estimates", "in_progress", "waiting_parts", "completed"];
+        if (!validColumns.includes(sourceColumn) || !validColumns.includes(targetColumn)) {
+            console.error('Invalid column:', { sourceColumn, targetColumn });
+            toast({
+                title: 'Error moving card',
+                description: 'Invalid workflow column',
+                status: 'error',
+                duration: 3000,
+                isClosable: true,
+            });
+            return;
+        }
+
+        // Prevent moving cards out of completed column
+        if (sourceColumn === "completed" && targetColumn !== "completed") {
+            toast({
+                title: 'Invalid move',
+                description: 'Cards cannot be moved out of the completed column',
+                status: 'error',
+                duration: 3000,
+                isClosable: true,
+            });
+            return;
+        }
+
+        if (sourceColumn === targetColumn) {
+            // Handle reordering within the same column
+            const oldIndex = boardState[sourceColumn].findIndex(
+                card => card.id.toString() === cardId
+            );
+
+            // Get the index of the card we're dropping on
+            const overCardIndex = boardState[sourceColumn].findIndex(
+                card => card.id.toString() === over.id.toString()
+            );
+
+            // If dropping on a card, use its index, otherwise append to the end
+            const newIndex = overCardIndex !== -1 ? overCardIndex : boardState[sourceColumn].length;
+
+            if (oldIndex !== newIndex) {
+                const newCards = arrayMove(boardState[sourceColumn], oldIndex, newIndex);
+                const newBoardState = {
+                    ...boardState,
+                    [sourceColumn]: newCards,
+                };
+
+                // Store original state for error handling
+                const originalState = { ...boardState };
+
+                try {
+                    // Update state optimistically
+                    setBoardState(newBoardState);
+                    // Update server
+                    await workflowApi.moveCard(cardId, targetColumn, newIndex);
+                } catch (error) {
+                    // Revert on error
+                    setBoardState(originalState);
+                    toast({
+                        title: 'Error moving card',
+                        description: 'Failed to update card position',
+                        status: 'error',
+                        duration: 3000,
+                        isClosable: true,
+                    });
+                }
+            }
+        } else {
+            // Handle moving to a different column
+            const newBoardState = { ...boardState };
+            const card = newBoardState[sourceColumn].find(c => c.id.toString() === cardId);
+
+            if (card) {
+                // Store original state for error handling
+                const originalState = { ...boardState };
+
+                try {
+                    // Remove card from source column
+                    newBoardState[sourceColumn] = newBoardState[sourceColumn].filter(
+                        c => c.id.toString() !== cardId
+                    );
+
+                    // Add card to target column
+                    if (!newBoardState[targetColumn]) {
+                        newBoardState[targetColumn] = [];
+                    }
+
+                    // If dropping on a card, insert at its position, otherwise append
+                    const overCardIndex = boardState[targetColumn]?.findIndex(
+                        card => card.id.toString() === over.id.toString()
+                    );
+
+                    if (overCardIndex !== -1) {
+                        newBoardState[targetColumn].splice(overCardIndex, 0, card);
+                    } else {
+                        newBoardState[targetColumn].push(card);
+                    }
+
+                    // Update state optimistically
+                    setBoardState(newBoardState);
+
+                    // Update server
+                    const position = overCardIndex !== -1 ? overCardIndex : newBoardState[targetColumn].length - 1;
+                    await workflowApi.moveCard(cardId, targetColumn, position);
+                } catch (error) {
+                    // Revert on error
+                    setBoardState(originalState);
+                    toast({
+                        title: 'Error moving card',
+                        description: 'Failed to move card to new column',
+                        status: 'error',
+                        duration: 3000,
+                        isClosable: true,
+                    });
+                }
+            }
+        }
     };
 
     if (isLoading) {
@@ -173,7 +283,15 @@ const WorkflowBoard: React.FC = () => {
                 </Flex>
 
                 <DragOverlay dropAnimation={defaultDropAnimation}>
-                    {activeId ? <div>Dragging...</div> : null}
+                    {activeId && activeCard ? (
+                        <Box opacity={0.8}>
+                            <SortableCard
+                                serviceRequest={activeCard}
+                                column=""
+                                onClick={() => { }}
+                            />
+                        </Box>
+                    ) : null}
                 </DragOverlay>
             </DndContext>
 
@@ -182,7 +300,7 @@ const WorkflowBoard: React.FC = () => {
                     serviceRequest={selectedCard}
                     isOpen={isCardDetailOpen}
                     onClose={() => setIsCardDetailOpen(false)}
-                    socket={socket}
+                    socketIO={{ isConnected, error: socketError, emit, on }}
                 />
             )}
         </>

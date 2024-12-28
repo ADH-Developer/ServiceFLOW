@@ -129,11 +129,13 @@ class ServiceRequestSerializer(serializers.ModelSerializer):
     vehicle = VehicleSerializer()
     comments = CommentSerializer(many=True, read_only=True)
     labels = LabelSerializer(many=True, read_only=True)
+    customer = CustomerProfileSerializer(read_only=True)
 
     class Meta:
         model = ServiceRequest
         fields = [
             "id",
+            "customer",
             "vehicle",
             "services",
             "appointment_date",

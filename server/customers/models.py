@@ -193,8 +193,15 @@ class ServiceRequest(models.Model):
             )
 
     def save(self, *args, **kwargs):
-        self.clean()  # Run validation before saving
+        # Check if this is a new instance
+        is_new = self.pk is None
 
+        # If new instance, check auto-confirm setting
+        if is_new:
+            settings = SystemSettings.get_settings()
+            if settings.auto_confirm_appointments:
+                self.status = "confirmed"
+                self.workflow_column = "estimates"
         # Check if workflow column is changing
         if self.pk:
             try:
@@ -321,3 +328,65 @@ class Label(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class SystemSettings(models.Model):
+    auto_confirm_appointments = models.BooleanField(
+        default=False,
+        help_text="If enabled, new appointments will be automatically confirmed instead of pending",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "System Settings"
+        verbose_name_plural = "System Settings"
+
+    def save(self, *args, **kwargs):
+        if self.auto_confirm_appointments:
+            # Get count of pending appointments
+            pending_count = ServiceRequest.objects.filter(status="pending").count()
+
+            if pending_count > 0:
+                # Update all pending appointments to confirmed
+                ServiceRequest.objects.filter(status="pending").update(
+                    status="confirmed", workflow_column="estimates"
+                )
+
+                # Update cache
+                try:
+                    # Update pending count in cache
+                    cache.set("pending_appointments_count", 0, 300)
+                    logger.info(f"Auto-confirmed {pending_count} pending appointments")
+                except Exception as e:
+                    logger.error(f"Error updating cache after auto-confirmation: {e}")
+
+        # Ensure only one instance exists
+        self.__class__.objects.exclude(id=self.id).delete()
+        super().save(*args, **kwargs)
+
+        # After saving, trigger async notification if needed
+        if self.auto_confirm_appointments and pending_count > 0:
+            from asgiref.sync import async_to_sync
+
+            try:
+                async_to_sync(self.notify_auto_confirm)(pending_count)
+            except Exception as e:
+                logger.error(f"Error sending auto-confirm notification: {e}")
+
+    async def notify_auto_confirm(self, pending_count):
+        """Send notifications about auto-confirmed appointments"""
+        try:
+            await socket_manager.emit_to_namespace(
+                "appointments", "pending_count_updated", {"count": 0}
+            )
+            logger.info(
+                f"Sent notification for {pending_count} auto-confirmed appointments"
+            )
+        except Exception as e:
+            logger.error(f"Error sending auto-confirm notification: {e}")
+
+    @classmethod
+    def get_settings(cls):
+        """Get or create system settings"""
+        settings, _ = cls.objects.get_or_create(pk=1)
+        return settings
