@@ -48,7 +48,6 @@ INSTALLED_APPS = [
     "rest_framework",
     "djoser",
     "drf_yasg",
-    "channels",
     "customers.apps.CustomersConfig",
 ]
 
@@ -63,29 +62,6 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
 ]
-
-# Redis Configuration
-REDIS_HOST = os.environ.get("REDIS_HOST", "redis")
-REDIS_PORT = os.environ.get("REDIS_PORT", "6379")
-REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD")
-
-# Cache Configuration
-CACHES = {
-    "default": {
-        "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/0",
-        "OPTIONS": {
-            "CLIENT_CLASS": "django_redis.client.DefaultClient",
-        },
-    }
-}
-
-# Session Configuration
-SESSION_ENGINE = "django.contrib.sessions.backends.cache"
-SESSION_CACHE_ALIAS = "default"
-
-# Cache time to live is 15 minutes
-CACHE_TTL = 60 * 15
 
 ROOT_URLCONF = "server.urls"
 
@@ -106,7 +82,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = "server.wsgi.application"
-
+ASGI_APPLICATION = "server.asgi.application"
 
 # Database
 # https://docs.djangoproject.com/en/3.2/ref/settings/#databases
@@ -121,7 +97,6 @@ DATABASES = {
         "PORT": os.environ.get("DB_PORT", "5432"),
     }
 }
-
 
 # Password validation
 # https://docs.djangoproject.com/en/3.2/ref/settings/#auth-password-validators
@@ -141,7 +116,6 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-
 # Internationalization
 # https://docs.djangoproject.com/en/3.2/topics/i18n/
 
@@ -154,8 +128,6 @@ USE_I18N = True
 USE_L10N = True
 
 USE_TZ = True
-
-CORS_ALLOW_ALL_ORIGINS = False
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/3.2/howto/static-files/
@@ -190,20 +162,15 @@ SWAGGER_SETTINGS = {
 }
 
 JAZZMIN_SETTINGS = {
-    # title of the window (Will default to current_admin_site.site_title if absent or None)
     "site_title": "Admin Panel",
-    # Title on the brand (19 chars max) (defaults to current_admin_site.site_header if absent or None)
     "site_brand": "Server",
     "site_header": "Server",
-    # CSS classes that are applied to the logo above
     "site_logo_classes": "img-circle",
-    # Relative path to a favicon for your site, will default to site_logo if absent (ideally 32x32 px)
     "site_icon": None,
-    # "related_modal_active": True,
-    # Welcome text on the login screen
     "welcome_sign": "Welcome to the Server Admin Panel",
     "show_ui_builder": True,
 }
+
 JAZZMIN_UI_TWEAKS = {
     "navbar_small_text": False,
     "footer_small_text": False,
@@ -236,39 +203,63 @@ JAZZMIN_UI_TWEAKS = {
 }
 
 # CORS settings
-CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOW_ALL_ORIGINS = True  # For development only
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
 ]
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://localhost:3000$",
+]
+CORS_ALLOW_METHODS = [
+    "DELETE",
+    "GET",
+    "OPTIONS",
+    "PATCH",
+    "POST",
+    "PUT",
+]
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+]
 
-# Add default group permissions
-GROUPS = {
-    "Customer": {
-        "permissions": [
-            "can_view_own_profile",
-            "can_edit_own_profile",
-            "can_create_service_request",
-            "can_view_own_service_requests",
-        ]
-    },
-    "Staff": {
-        "permissions": [
-            "can_view_all_profiles",
-            "can_edit_all_profiles",
-            "can_view_all_service_requests",
-            "can_edit_service_requests",
-        ]
-    },
-}
+# Socket.IO settings
+SOCKETIO_CORS_ALLOWED_ORIGINS = ["http://localhost:3000"]
 
-# Channels Configuration
-ASGI_APPLICATION = "server.asgi.application"
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {
-            "hosts": [f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/0"],
+# Logging Configuration
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "{levelname} {asctime} {module} {process:d} {thread:d} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
+        },
+    },
+    "loggers": {
+        "customers.socket_io": {
+            "handlers": ["console"],
+            "level": "DEBUG",
+            "propagate": True,
+        },
+        "socketio": {
+            "handlers": ["console"],
+            "level": "DEBUG",
+            "propagate": True,
         },
     },
 }

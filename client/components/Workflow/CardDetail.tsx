@@ -29,6 +29,7 @@ import {
 import { FiPlus, FiX, FiMessageSquare, FiTag } from 'react-icons/fi';
 import type { ServiceRequest } from '../../types/service-request';
 import { workflowApi } from '../../lib/api-services';
+import { useSocketIO } from '../../hooks/useSocketIO';
 
 interface Comment {
     id: number;
@@ -45,14 +46,14 @@ interface CardDetailProps {
     serviceRequest: ServiceRequest;
     isOpen: boolean;
     onClose: () => void;
-    websocket: WebSocket | null;
+    socketIO: ReturnType<typeof useSocketIO>;
 }
 
 const CardDetail: React.FC<CardDetailProps> = ({
     serviceRequest,
     isOpen,
     onClose,
-    websocket,
+    socketIO,
 }) => {
     const [newComment, setNewComment] = useState('');
     const [newLabel, setNewLabel] = useState('');
@@ -104,12 +105,10 @@ const CardDetail: React.FC<CardDetailProps> = ({
     }, [isOpen, serviceRequest.id, toast]);
 
     useEffect(() => {
-        if (!websocket) return;
+        if (!socketIO) return;
 
-        const handleWebSocketMessage = (event: MessageEvent) => {
-            const data = JSON.parse(event.data);
-
-            if (data.type === 'comment_update' && data.card_id === serviceRequest.id) {
+        const unsubscribeComment = socketIO.on('comment_updated', (data: any) => {
+            if (data.card_id === serviceRequest.id) {
                 if (data.action === 'add') {
                     const newComment = transformComment(data.comment);
                     setComments(prev => [...prev, newComment]);
@@ -117,22 +116,23 @@ const CardDetail: React.FC<CardDetailProps> = ({
                     setComments(prev => prev.filter(comment => comment.id !== data.comment.id));
                 }
             }
+        });
 
-            if (data.type === 'label_update' && data.card_id === serviceRequest.id) {
+        const unsubscribeLabel = socketIO.on('label_updated', (data: any) => {
+            if (data.card_id === serviceRequest.id) {
                 if (data.action === 'add') {
                     setLabels(prev => [...prev, data.label]);
                 } else if (data.action === 'remove') {
                     setLabels(prev => prev.filter(label => label !== data.label));
                 }
             }
-        };
-
-        websocket.addEventListener('message', handleWebSocketMessage);
+        });
 
         return () => {
-            websocket.removeEventListener('message', handleWebSocketMessage);
+            unsubscribeComment();
+            unsubscribeLabel();
         };
-    }, [websocket, serviceRequest.id]);
+    }, [socketIO, serviceRequest.id]);
 
     const formatDate = (dateStr: string) => {
         return new Date(dateStr).toLocaleDateString();
@@ -157,25 +157,44 @@ const CardDetail: React.FC<CardDetailProps> = ({
     };
 
     const handleAddComment = async () => {
-        if (newComment.trim()) {
-            try {
-                await workflowApi.addComment(serviceRequest.id, newComment);
-                setNewComment('');
-            } catch (error) {
-                toast({
-                    title: 'Error adding comment',
-                    description: 'Please try again',
-                    status: 'error',
-                    duration: 3000,
-                });
-            }
+        if (!newComment.trim()) return;
+
+        try {
+            const response = await workflowApi.addComment(serviceRequest.id, newComment);
+            const comment = transformComment(response);
+            setComments(prev => [...prev, comment]);
+            setNewComment('');
+
+            // Notify other clients
+            socketIO?.emit('comment_update', {
+                card_id: serviceRequest.id,
+                action: 'add',
+                comment: response
+            });
+        } catch (error) {
+            console.error('Error adding comment:', error);
+            toast({
+                title: 'Error adding comment',
+                description: 'Please try again',
+                status: 'error',
+                duration: 3000,
+            });
         }
     };
 
-    const handleDeleteComment = async (commentId: number) => {
+    const handleDeleteComment = async (commentId: string) => {
         try {
             await workflowApi.deleteComment(serviceRequest.id, commentId);
+            setComments(prev => prev.filter(comment => comment.id !== commentId));
+
+            // Notify other clients
+            socketIO?.emit('comment_update', {
+                card_id: serviceRequest.id,
+                action: 'delete',
+                comment: { id: commentId }
+            });
         } catch (error) {
+            console.error('Error deleting comment:', error);
             toast({
                 title: 'Error deleting comment',
                 description: 'Please try again',
@@ -186,25 +205,43 @@ const CardDetail: React.FC<CardDetailProps> = ({
     };
 
     const handleAddLabel = async () => {
-        if (newLabel.trim() && !labels.includes(newLabel)) {
-            try {
-                await workflowApi.addLabel(serviceRequest.id, newLabel);
-                setNewLabel('');
-            } catch (error) {
-                toast({
-                    title: 'Error adding label',
-                    description: 'Please try again',
-                    status: 'error',
-                    duration: 3000,
-                });
-            }
+        if (!newLabel.trim()) return;
+
+        try {
+            await workflowApi.addLabel(serviceRequest.id, newLabel);
+            setLabels(prev => [...prev, newLabel]);
+            setNewLabel('');
+
+            // Notify other clients
+            socketIO?.emit('label_update', {
+                card_id: serviceRequest.id,
+                action: 'add',
+                label: newLabel
+            });
+        } catch (error) {
+            console.error('Error adding label:', error);
+            toast({
+                title: 'Error adding label',
+                description: 'Please try again',
+                status: 'error',
+                duration: 3000,
+            });
         }
     };
 
     const handleRemoveLabel = async (label: string) => {
         try {
             await workflowApi.removeLabel(serviceRequest.id, label);
+            setLabels(prev => prev.filter(l => l !== label));
+
+            // Notify other clients
+            socketIO?.emit('label_update', {
+                card_id: serviceRequest.id,
+                action: 'remove',
+                label
+            });
         } catch (error) {
+            console.error('Error removing label:', error);
             toast({
                 title: 'Error removing label',
                 description: 'Please try again',

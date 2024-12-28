@@ -27,6 +27,7 @@ from .serializers import (
     LabelSerializer,
     ServiceRequestSerializer,
 )
+from .socket_io import get_pending_count, get_today_appointments, socket_manager
 
 logger = logging.getLogger(__name__)
 
@@ -288,16 +289,68 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
         ).order_by("-created_at")
 
     def perform_create(self, serializer):
-        try:
-            # Get the customer profile
-            customer = self.request.user.customerprofile
-            # Pass customer to serializer.save()
-            serializer.save(customer=customer)
-        except CustomerProfile.DoesNotExist:
-            raise ValidationError("Customer profile not found")
-        except Exception as e:
-            print(f"Error in perform_create: {str(e)}")
-            raise ValidationError(str(e))
+        """Called when a service request is created"""
+        instance = serializer.save()
+        logger.info(f"New appointment created with ID: {instance.id}")
+
+        # Emit socket events for real-time updates
+        async def emit_updates():
+            try:
+                logger.info("Starting socket event emissions...")
+
+                # Emit the new appointment
+                logger.info("Preparing appointment data for emission...")
+                appointment_data = ServiceRequestSerializer(instance).data
+                logger.info(f"Appointment data prepared: {appointment_data}")
+
+                logger.info("Emitting appointment_created event...")
+                await socket_manager.emit_to_namespace(
+                    "appointments",
+                    "appointment_created",
+                    appointment_data,
+                )
+                logger.info("Successfully emitted appointment_created event")
+
+                # Update pending count
+                logger.info("Getting pending count...")
+                pending_count = await get_pending_count()
+                logger.info(f"Got pending count: {pending_count}")
+
+                logger.info("Emitting pending_count_updated event...")
+                await socket_manager.emit_to_namespace(
+                    "appointments", "pending_count_updated", {"count": pending_count}
+                )
+                logger.info("Successfully emitted pending_count_updated event")
+
+                # Update today's appointments if the new appointment is for today
+                if instance.appointment_date == timezone.now().date():
+                    logger.info(
+                        "Appointment is for today, getting today's appointments..."
+                    )
+                    today_data = await get_today_appointments()
+                    logger.info(f"Got today's appointments: {today_data}")
+
+                    logger.info("Emitting today_appointments_updated event...")
+                    await socket_manager.emit_to_namespace(
+                        "appointments", "today_appointments_updated", today_data
+                    )
+                    logger.info("Successfully emitted today_appointments_updated event")
+                else:
+                    logger.info(
+                        "Appointment is not for today, skipping today's appointments update"
+                    )
+
+                logger.info("Successfully completed all socket event emissions")
+            except Exception as e:
+                logger.error(f"Error emitting socket events: {str(e)}")
+                logger.exception(e)
+
+        import asyncio
+
+        logger.info("Creating async task for socket events...")
+        asyncio.create_task(emit_updates())
+        logger.info("Created async task for socket events")
+        return instance
 
     @action(detail=False, methods=["get"])
     def available_slots(self, request):

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import {
     Box,
@@ -16,27 +16,14 @@ import { AppointmentsList } from '../../../components/Dashboard/AppointmentsList
 import { appointmentsApi } from '../../../lib/api-services';
 import { useTab } from '../../../contexts/TabContext';
 import { withStaffAuth } from '../../../utils/withStaffAuth';
+import { SocketTest } from '../../../components/SocketTest';
+import { Appointment } from '../../../types/appointment';
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/appointments/';
-
-interface Appointment {
-    id: string;
-    appointment_date: string;
-    appointment_time: string;
-    customer?: {
-        first_name: string;
-        last_name: string;
-    };
-    vehicle?: {
-        year: string;
-        make: string;
-        model: string;
-    };
-    services: Array<{
-        service_type: string;
-        urgency: string;
-    }>;
-}
+const LoadingSpinner = () => (
+    <Center h="100vh">
+        <Spinner size="xl" color="blue.500" thickness="4px" />
+    </Center>
+);
 
 interface ServiceAdvisorContentProps {
     pendingCount: number;
@@ -44,7 +31,19 @@ interface ServiceAdvisorContentProps {
 }
 
 const ServiceAdvisorContent = ({ pendingCount, todayAppointments }: ServiceAdvisorContentProps) => {
-    console.log('Rendering ServiceAdvisorContent with:', { pendingCount, todayAppointments });
+    console.log('[ServiceAdvisorContent] Rendering with:', {
+        pendingCount,
+        todayAppointmentsCount: todayAppointments.length,
+        todayAppointmentIds: todayAppointments.map(a => a.id)
+    });
+
+    useEffect(() => {
+        console.log('[ServiceAdvisorContent] State updated:', {
+            pendingCount,
+            todayAppointmentsCount: todayAppointments.length,
+            todayAppointmentIds: todayAppointments.map(a => a.id)
+        });
+    }, [pendingCount, todayAppointments]);
 
     return (
         <Box>
@@ -89,12 +88,6 @@ const TechnicianContent = () => (
     </Box>
 );
 
-interface WebSocketMessage {
-    type: 'pending_count' | 'today_appointments';
-    count?: number;
-    appointments?: Appointment[];
-}
-
 const AdminDashboard = () => {
     const router = useRouter();
     const [isLoading, setIsLoading] = useState(true);
@@ -102,78 +95,51 @@ const AdminDashboard = () => {
     const [todayAppointments, setTodayAppointments] = useState<Appointment[]>([]);
     const { activeTab } = useTab();
     const [error, setError] = useState<string | null>(null);
-    const wsRef = useRef<WebSocket | null>(null);
-    const isMountedRef = useRef(true);
 
-    const fetchDashboardData = async () => {
+    const handlePendingCountUpdate = useCallback((count: number) => {
+        console.log('[Dashboard] handlePendingCountUpdate called with count:', count);
+        console.log('[Dashboard] Previous pending count:', pendingCount);
+        setPendingCount(count);
+        console.log('[Dashboard] Set new pending count:', count);
+    }, [pendingCount]);
+
+    const handleTodayAppointmentsUpdate = useCallback((appointments: Appointment[]) => {
+        console.log('[Dashboard] handleTodayAppointmentsUpdate called with appointments:', appointments.map(a => a.id));
+        console.log('[Dashboard] Previous today appointments:', todayAppointments.map(a => a.id));
+        setTodayAppointments(appointments);
+        console.log('[Dashboard] Set new today appointments:', appointments.map(a => a.id));
+    }, [todayAppointments]);
+
+    const fetchDashboardData = useCallback(async () => {
         try {
+            console.log('[Dashboard] Fetching dashboard data...');
             const [pendingData, todayData] = await Promise.all([
                 appointmentsApi.getPendingCount(),
                 appointmentsApi.getTodayAppointments()
             ]);
 
-            console.log('Initial data loaded:', { pendingData, todayData });
-            setPendingCount(pendingData.count);
-            setTodayAppointments(todayData);
+            console.log('[Dashboard] Dashboard data loaded:', { pendingData, todayData });
+            handlePendingCountUpdate(pendingData.count);
+            handleTodayAppointmentsUpdate(todayData);
             setError(null);
         } catch (error) {
-            console.error('Error fetching dashboard data:', error);
+            console.error('[Dashboard] Error fetching dashboard data:', error);
             setError('Failed to fetch dashboard data');
         }
-    };
-
-    const connectWebSocket = () => {
-        console.log('Attempting WebSocket connection...');
-        const ws = new WebSocket(WS_URL);
-
-        ws.onopen = () => {
-            if (isMountedRef.current) {
-                console.log('WebSocket connected successfully');
-            }
-        };
-
-        ws.onmessage = (event) => {
-            try {
-                console.log('WebSocket message received:', event.data);
-                const data = JSON.parse(event.data) as WebSocketMessage;
-
-                if (!isMountedRef.current) return;
-
-                if (data.type === 'pending_count' && typeof data.count === 'number') {
-                    setPendingCount(data.count);
-                } else if (data.type === 'today_appointments' && Array.isArray(data.appointments)) {
-                    setTodayAppointments(data.appointments);
-                }
-            } catch (error) {
-                console.error('Error processing websocket message:', error);
-            }
-        };
-
-        ws.onclose = () => {
-            if (isMountedRef.current) {
-                console.log('WebSocket connection closed, attempting reconnect...');
-                setTimeout(connectWebSocket, 5000);
-            }
-        };
-
-        ws.onerror = (error) => {
-            if (isMountedRef.current) {
-                console.error('WebSocket error:', error);
-                ws.close();
-            }
-        };
-
-        wsRef.current = ws;
-    };
+    }, [handlePendingCountUpdate, handleTodayAppointmentsUpdate]);
 
     useEffect(() => {
-        isMountedRef.current = true;
+        console.log('[Dashboard] Current state:', { pendingCount, todayAppointments });
+    }, [pendingCount, todayAppointments]);
 
+    useEffect(() => {
         const checkAuthAndFetchData = async () => {
+            console.log('[Dashboard] Checking auth and fetching data...');
             const token = localStorage.getItem('accessToken');
             const userData = localStorage.getItem('userData');
 
             if (!token || !userData) {
+                console.log('[Dashboard] No token or user data found, redirecting to login');
                 router.push('/login');
                 return;
             }
@@ -181,40 +147,28 @@ const AdminDashboard = () => {
             try {
                 const user = JSON.parse(userData);
                 if (!user.is_staff) {
+                    console.log('[Dashboard] User is not staff, redirecting to dashboard');
                     router.push('/dashboard');
                     return;
                 }
 
+                console.log('[Dashboard] User is authenticated, fetching data');
                 await fetchDashboardData();
-                connectWebSocket();
                 setIsLoading(false);
             } catch (error) {
-                console.error('Error:', error);
+                console.error('[Dashboard] Error during auth check:', error);
                 router.push('/login');
             }
         };
 
         checkAuthAndFetchData();
-
-        return () => {
-            isMountedRef.current = false;
-            if (wsRef.current) {
-                wsRef.current.close();
-            }
-        };
-    }, [router]);
-
-    const spinnerProps: SpinnerProps = {
-        size: 'xl',
-        color: 'blue.500',
-        thickness: '4px',
-    };
+    }, [router, fetchDashboardData]);
 
     if (isLoading) {
         return (
-            <Center h="100vh">
-                <Spinner {...spinnerProps} />
-            </Center>
+            <Box h="100vh" display="flex" alignItems="center" justifyContent="center">
+                <Text>Loading...</Text>
+            </Box>
         );
     }
 
@@ -231,6 +185,11 @@ const AdminDashboard = () => {
 
     return (
         <AdminDashboardLayout>
+            <SocketTest
+                onAppointmentCreated={fetchDashboardData}
+                onPendingCountUpdated={handlePendingCountUpdate}
+                onTodayAppointmentsUpdated={handleTodayAppointmentsUpdate}
+            />
             {activeTab === 'service-advisor' ? (
                 <ServiceAdvisorContent
                     pendingCount={pendingCount}
@@ -241,6 +200,6 @@ const AdminDashboard = () => {
             )}
         </AdminDashboardLayout>
     );
-}
+};
 
 export default withStaffAuth(AdminDashboard); 

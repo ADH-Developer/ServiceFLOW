@@ -1,7 +1,5 @@
 import logging
 
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
 from django.contrib.auth.models import Group, User
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
@@ -9,6 +7,7 @@ from django.db import models
 from django.utils import timezone
 
 from .cache import AppointmentCache
+from .socket_io import socket_manager
 
 logger = logging.getLogger(__name__)
 
@@ -78,11 +77,11 @@ class ServiceRequest(models.Model):
         max_length=20,
         choices=WORKFLOW_COLUMN_CHOICES,
         default="estimates",
-        db_index=True,  # Add index for faster column filtering
+        db_index=True,
     )
     workflow_position = models.IntegerField(
         default=0,
-        db_index=True,  # Add index for faster ordering
+        db_index=True,
     )
     workflow_history = models.JSONField(default=list, blank=True)
     appointment_date = models.DateField()
@@ -93,11 +92,9 @@ class ServiceRequest(models.Model):
 
     class Meta:
         indexes = [
-            models.Index(
-                fields=["workflow_column", "workflow_position"]
-            ),  # Composite index for column+position queries
+            models.Index(fields=["workflow_column", "workflow_position"]),
         ]
-        ordering = ["workflow_column", "workflow_position"]  # Default ordering
+        ordering = ["workflow_column", "workflow_position"]
 
     def __str__(self):
         return f"{self.customer} - {self.appointment_date} {self.appointment_time}"
@@ -131,7 +128,7 @@ class ServiceRequest(models.Model):
                         f"{business_hours.end_time.strftime('%I:%M %p')}"
                     )
 
-    def update_cache_and_notify(self):
+    async def update_cache_and_notify(self):
         try:
             logger.info("Starting update_cache_and_notify")
             # Get new pending count
@@ -145,9 +142,7 @@ class ServiceRequest(models.Model):
 
             today = date.today()
             today_appointments = (
-                ServiceRequest.objects.filter(
-                    appointment_date=today
-                )  # Remove status filter
+                ServiceRequest.objects.filter(appointment_date=today)
                 .select_related("customer__user", "vehicle")
                 .prefetch_related("services")
                 .order_by("appointment_time")
@@ -165,33 +160,22 @@ class ServiceRequest(models.Model):
             except Exception as e:
                 logger.error(f"Error updating cache: {e}")
 
-            # Send WebSocket notifications
+            # Send Socket.IO notifications
             try:
-                logger.info("Sending WebSocket notifications...")
-                channel_layer = get_channel_layer()
+                logger.info("Sending Socket.IO notifications...")
 
                 # Send pending count update
-                async_to_sync(channel_layer.group_send)(
-                    "appointments",
-                    {
-                        "type": "appointment_update",
-                        "message_type": "pending_count",
-                        "count": pending_count,
-                    },
+                await socket_manager.emit_to_namespace(
+                    "appointments", "pending_count_updated", {"count": pending_count}
                 )
 
                 # Send today's appointments update
-                async_to_sync(channel_layer.group_send)(
-                    "appointments",
-                    {
-                        "type": "appointment_update",
-                        "message_type": "today_appointments",
-                        "appointments": appointments_data,
-                    },
+                await socket_manager.emit_to_namespace(
+                    "appointments", "today_appointments_updated", appointments_data
                 )
                 logger.info("Sent today's appointments update")
             except Exception as e:
-                logger.error(f"Error sending WebSocket notification: {e}")
+                logger.error(f"Error sending Socket.IO notification: {e}")
 
             return pending_count
         except Exception as e:
@@ -248,10 +232,6 @@ class ServiceRequest(models.Model):
 
         # Save the instance
         super().save(*args, **kwargs)
-
-        # Update cache if status changed
-        if "status_changed" in locals() and status_changed:
-            self.update_cache_and_notify()
 
     def delete(self, *args, **kwargs):
         # Delete the instance

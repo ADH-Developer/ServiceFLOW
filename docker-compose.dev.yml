@@ -19,10 +19,9 @@ services:
       - DJANGO_SETTINGS_MODULE=server.settings
       - PYTHONPATH=/src
     command: >
-      sh -c "sh migrations.sh && daphne -b 0.0.0.0 -p 8000 server.asgi:application"
+      sh -c "sh migrations.sh && uvicorn server.asgi:application --host 0.0.0.0 --port 8000"
     depends_on:
       - db
-      - redis
 
   client:
     container_name: client
@@ -50,16 +49,5 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-  redis:
-    container_name: redis
-    image: redis:7.0-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --save 20 1 --loglevel warning --requirepass gLMgr@9DAy77UE4
-    restart: always
-
 volumes:
   postgres_data:
-  redis_data:
