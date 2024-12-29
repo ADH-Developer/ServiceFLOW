@@ -16,7 +16,6 @@ import { AppointmentsList } from '../../../components/Dashboard/AppointmentsList
 import { appointmentsApi } from '../../../lib/api-services';
 import { useTab } from '../../../contexts/TabContext';
 import { withStaffAuth } from '../../../utils/withStaffAuth';
-import { SocketTest } from '../../../components/SocketTest';
 import { Appointment } from '../../../types/appointment';
 
 const LoadingSpinner = () => (
@@ -185,11 +184,6 @@ const AdminDashboard = () => {
 
     return (
         <AdminDashboardLayout>
-            <SocketTest
-                onAppointmentCreated={fetchDashboardData}
-                onPendingCountUpdated={handlePendingCountUpdate}
-                onTodayAppointmentsUpdated={handleTodayAppointmentsUpdate}
-            />
             {activeTab === 'service-advisor' ? (
                 <ServiceAdvisorContent
                     pendingCount={pendingCount}
