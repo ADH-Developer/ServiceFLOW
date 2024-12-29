@@ -17,21 +17,29 @@ sio = socketio.AsyncServer(
 )
 
 
-# Socket.IO Manager for handling room/namespace operations
 class SocketManager:
+    """Socket.IO Manager for handling namespace operations and event emission"""
+
     def __init__(self):
         self.sio = sio
         logger.info("SocketManager initialized")
 
     async def emit_to_namespace(self, namespace: str, event: str, data: any) -> None:
-        """Emit event to all clients in a namespace"""
+        """
+        Emit event to all clients in a namespace
+
+        Args:
+            namespace: The target namespace
+            event: The event name to emit
+            data: The data payload to send
+        """
         try:
             logger.info(
-                f"[SocketManager] Emitting event '{event}' to namespace '/{namespace}' with data: {data}"
+                f"[SocketManager] Emitting '{event}' to '/{namespace}' with {len(data) if isinstance(data, list) else 1} records"
             )
             await self.sio.emit(event, data, namespace=f"/{namespace}")
             logger.info(
-                f"[SocketManager] Successfully emitted event '{event}' to namespace '/{namespace}'"
+                f"[SocketManager] Successfully emitted '{event}' to '/{namespace}'"
             )
         except Exception as e:
             logger.error(
@@ -44,23 +52,14 @@ socket_manager = SocketManager()
 logger.info("Global socket_manager instance created")
 
 
-# Helper functions for async database operations
 @sync_to_async
-def get_pending_count():
-    from customers.models import ServiceRequest
+def get_dashboard_schedule():
+    """
+    Fetch today's appointments for the dashboard
 
-    try:
-        count = ServiceRequest.objects.filter(status="pending").count()
-        logger.info(f"[get_pending_count] Got pending count: {count}")
-        return count
-    except Exception as e:
-        logger.error(f"[get_pending_count] Error getting pending count: {str(e)}")
-        logger.exception(e)
-        raise
-
-
-@sync_to_async
-def get_today_appointments():
+    Returns:
+        List of serialized appointments for today
+    """
     from customers.models import ServiceRequest
     from customers.serializers import ServiceRequestSerializer
 
@@ -70,54 +69,53 @@ def get_today_appointments():
         ).order_by("appointment_time")
         data = ServiceRequestSerializer(today_appointments, many=True).data
         logger.info(
-            f"[get_today_appointments] Got today's appointments: {len(data)} appointments"
+            f"[get_dashboard_schedule] Retrieved {len(data)} appointments for today"
         )
         return data
     except Exception as e:
-        logger.error(
-            f"[get_today_appointments] Error getting today's appointments: {str(e)}"
-        )
+        logger.error(f"[get_dashboard_schedule] Error retrieving schedule: {str(e)}")
         logger.exception(e)
         raise
 
 
-# Socket.IO event handlers
 @sio.on("join")
 async def handle_join(sid, namespace):
-    """Handle client joining a namespace"""
+    """
+    Handle client joining a namespace
+
+    Args:
+        sid: Session ID of the client
+        namespace: The namespace being joined
+    """
     logger.info(f"[handle_join] Client {sid} joining namespace: {namespace}")
     try:
-        # Send initial state
-        logger.info(f"[handle_join] Getting initial state for client {sid}")
-        pending_count = await get_pending_count()
-        today_data = await get_today_appointments()
-
-        logger.info(f"[handle_join] Emitting initial state to client {sid}")
+        schedule_data = await get_dashboard_schedule()
         await socket_manager.emit_to_namespace(
-            namespace, "pending_count_updated", {"count": pending_count}
+            namespace, "dashboard_schedule_updated", schedule_data
         )
-        await socket_manager.emit_to_namespace(
-            namespace, "today_appointments_updated", today_data
-        )
-        logger.info(
-            f"[handle_join] Successfully sent initial state to client {sid} in namespace {namespace}"
-        )
+        logger.info(f"[handle_join] Successfully sent schedule to client {sid}")
     except Exception as e:
-        logger.error(
-            f"[handle_join] Error sending initial state to client {sid}: {str(e)}"
-        )
+        logger.error(f"[handle_join] Error sending schedule to client {sid}: {str(e)}")
         logger.exception(e)
 
 
 @sio.on("connect")
 async def connect(sid, environ, auth=None):
-    """Handle client connection"""
-    logger.info(f"[connect] Client {sid} connected with auth: {auth}")
+    """
+    Handle client connection and authentication
+
+    Args:
+        sid: Session ID of the client
+        environ: WSGI environment
+        auth: Authentication data containing namespace
+    """
     if auth and "namespace" in auth:
-        logger.info(f"[connect] Client {sid} has namespace in auth, handling join")
+        logger.info(
+            f"[connect] Client {sid} connected to namespace: {auth['namespace']}"
+        )
         await handle_join(sid, auth["namespace"])
     else:
-        logger.warning(f"[connect] Client {sid} connected without namespace in auth")
+        logger.warning(f"[connect] Client {sid} connected without namespace")
 
 
 @sio.on("disconnect")
@@ -128,10 +126,9 @@ async def disconnect(sid):
 
 @sio.on("ping")
 async def handle_ping(sid):
-    """Handle ping from client"""
-    logger.debug(f"[handle_ping] Received ping from client {sid}")
+    """Handle ping from client to maintain connection"""
     await sio.emit("pong", room=sid)
-    logger.debug(f"[handle_ping] Sent pong to client {sid}")
+    logger.debug(f"[handle_ping] Responded to ping from {sid}")
 
 
 # Export the ASGI app

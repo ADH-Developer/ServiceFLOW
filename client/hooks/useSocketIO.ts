@@ -3,154 +3,170 @@ import { io, Socket } from 'socket.io-client';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+interface SocketMetrics {
+    reconnectAttempts: number;
+    lastReconnectTime: number | null;
+    connectionStartTime: number | null;
+}
+
+/**
+ * Custom hook for Socket.IO integration with automatic reconnection and metrics
+ * @param namespace - The Socket.IO namespace to connect to
+ * @returns Object containing connection state, error state, and event handlers
+ */
 export const useSocketIO = (namespace: string) => {
     const [isConnected, setIsConnected] = useState(false);
     const [error, setError] = useState<Error | null>(null);
     const socketRef = useRef<Socket | null>(null);
     const mountedRef = useRef(true);
+    const metricsRef = useRef<SocketMetrics>({
+        reconnectAttempts: 0,
+        lastReconnectTime: null,
+        connectionStartTime: null,
+    });
+
+    const logSocketEvent = useCallback((event: string, details?: any) => {
+        const timestamp = new Date().toISOString();
+        const logEntry = {
+            timestamp,
+            namespace,
+            event,
+            connectionState: isConnected,
+            reconnectAttempts: metricsRef.current.reconnectAttempts,
+            ...details
+        };
+        // In production, this could be sent to a logging service
+        console.log(`[Socket.IO] ${event}:`, logEntry);
+    }, [namespace, isConnected]);
 
     const connect = useCallback(() => {
-        if (!mountedRef.current) {
-            console.log('[useSocketIO] Component unmounted, skipping connection');
-            return;
-        }
-        if (socketRef.current?.connected) {
-            console.log('[useSocketIO] Socket already connected, skipping connection');
+        if (!mountedRef.current || socketRef.current?.connected) {
             return;
         }
 
         try {
-            console.log(`[useSocketIO] Connecting to Socket.IO at ${API_URL} with namespace /${namespace}`);
+            // Reset metrics on new connection attempt
+            metricsRef.current = {
+                reconnectAttempts: 0,
+                lastReconnectTime: Date.now(),
+                connectionStartTime: Date.now(),
+            };
 
-            // Create socket instance
             const socket = io(API_URL, {
                 path: '/socket.io',
                 transports: ['websocket'],
                 autoConnect: true,
                 reconnection: true,
                 reconnectionDelay: 1000,
-                reconnectionAttempts: Infinity,
-                auth: {
-                    namespace
-                }
+                reconnectionAttempts: 60, // 1 minute of attempts
+                auth: { namespace }
             });
 
-            // Debug socket events
-            socket.onAny((event, ...args) => {
-                console.log(`[useSocketIO] Received event '${event}':`, args);
+            socket.on('connect', () => {
+                if (!mountedRef.current) return;
+
+                setIsConnected(true);
+                setError(null);
+                socket.emit('join', namespace);
+
+                logSocketEvent('connected', {
+                    connectionTime: Date.now() - (metricsRef.current.connectionStartTime || 0),
+                    reconnectAttempts: metricsRef.current.reconnectAttempts,
+                });
             });
 
             socket.on('connect_error', (err) => {
-                console.error(`[useSocketIO] Connection error:`, err);
-            });
+                if (!mountedRef.current) return;
 
-            socket.on('error', (err) => {
-                console.error(`[useSocketIO] Socket error:`, err);
-            });
+                metricsRef.current.reconnectAttempts++;
+                metricsRef.current.lastReconnectTime = Date.now();
 
-            // Namespace handling
-            socket.emit('join', namespace);
-            console.log(`[useSocketIO] Emitted join event for namespace /${namespace}`);
-
-            socket.on('connect', () => {
-                if (!mountedRef.current) {
-                    console.log('[useSocketIO] Component unmounted during connect event, skipping');
-                    return;
-                }
-                console.log(`[useSocketIO] Socket.IO connected successfully to namespace /${namespace}`);
-                setIsConnected(true);
-                setError(null);
-
-                // Re-join namespace after reconnection
-                socket.emit('join', namespace);
-                console.log(`[useSocketIO] Re-joined namespace /${namespace} after connection`);
+                logSocketEvent('connect_error', {
+                    error: err.message,
+                    attemptCount: metricsRef.current.reconnectAttempts
+                });
             });
 
             socket.on('disconnect', (reason) => {
-                if (!mountedRef.current) {
-                    console.log('[useSocketIO] Component unmounted during disconnect event, skipping');
-                    return;
-                }
-                console.log(`[useSocketIO] Socket.IO disconnected from namespace /${namespace}. Reason:`, reason);
+                if (!mountedRef.current) return;
+
                 setIsConnected(false);
-                // Attempt to reconnect unless explicitly disconnected
+                logSocketEvent('disconnected', { reason });
+
                 if (reason === 'io server disconnect') {
-                    console.log('[useSocketIO] Server initiated disconnect, attempting to reconnect');
                     socket.connect();
                 }
             });
 
             socketRef.current = socket;
+            logSocketEvent('setup_complete');
         } catch (err) {
-            if (!mountedRef.current) {
-                console.log('[useSocketIO] Component unmounted during setup, skipping error handling');
-                return;
-            }
-            console.error(`[useSocketIO] Socket.IO setup error:`, err);
-            setError(err instanceof Error ? err : new Error('Failed to setup Socket.IO'));
+            if (!mountedRef.current) return;
+
+            const error = err instanceof Error ? err : new Error('Failed to setup Socket.IO');
+            setError(error);
             setIsConnected(false);
+            logSocketEvent('setup_error', { error: error.message });
         }
-    }, [namespace]);
+    }, [namespace, logSocketEvent]);
 
     const emit = useCallback((event: string, data?: any) => {
         if (socketRef.current?.connected) {
-            console.log(`[useSocketIO] Emitting event '${event}' to namespace /${namespace}:`, data);
             socketRef.current.emit(event, data);
+            logSocketEvent('emit', { event, data });
         } else {
-            console.warn(`[useSocketIO] Socket.IO is not connected to namespace /${namespace}, message not sent:`, { event, data });
-            // Attempt to reconnect
+            logSocketEvent('emit_failed', { event, data });
             connect();
         }
-    }, [namespace, connect]);
+    }, [connect, logSocketEvent]);
 
     const on = useCallback(<T = any>(event: string, callback: (data: T) => void) => {
         if (!socketRef.current) {
-            console.warn(`[useSocketIO] Socket.IO not initialized, attempting to connect...`);
             connect();
             return () => { };
         }
 
-        console.log(`[useSocketIO] Setting up listener for event '${event}' on namespace /${namespace}`);
         const wrappedCallback = (data: T) => {
-            console.log(`[useSocketIO] Received event '${event}' on namespace /${namespace}:`, data);
-            console.log(`[useSocketIO] Calling callback for event '${event}'...`);
             if (mountedRef.current) {
                 try {
                     callback(data);
-                    console.log(`[useSocketIO] Successfully executed callback for event '${event}'`);
+                    logSocketEvent('event_handled', { event });
                 } catch (error) {
-                    console.error(`[useSocketIO] Error executing callback for event '${event}':`, error);
+                    logSocketEvent('event_error', { event, error: error instanceof Error ? error.message : 'Unknown error' });
                 }
-            } else {
-                console.log(`[useSocketIO] Component unmounted, skipping callback for event '${event}'`);
             }
         };
 
         socketRef.current.on(event, wrappedCallback);
-        console.log(`[useSocketIO] Successfully set up listener for event '${event}' on namespace /${namespace}`);
+        logSocketEvent('listener_added', { event });
 
         return () => {
             if (socketRef.current) {
-                console.log(`[useSocketIO] Removing listener for event '${event}' on namespace /${namespace}`);
                 socketRef.current.off(event, wrappedCallback);
+                logSocketEvent('listener_removed', { event });
             }
         };
-    }, [namespace, connect]);
+    }, [connect, logSocketEvent]);
 
     useEffect(() => {
         mountedRef.current = true;
-        console.log(`[useSocketIO] Initializing Socket.IO hook for namespace /${namespace}`);
         connect();
 
         return () => {
             mountedRef.current = false;
             if (socketRef.current) {
-                console.log(`[useSocketIO] Cleaning up Socket.IO connection for namespace /${namespace}`);
                 socketRef.current.disconnect();
                 socketRef.current = null;
+                logSocketEvent('cleanup');
             }
         };
-    }, [namespace, connect]);
+    }, [connect, logSocketEvent]);
 
-    return { isConnected, error, emit, on };
+    return {
+        isConnected,
+        error,
+        emit,
+        on,
+        metrics: metricsRef.current
+    };
 }; 

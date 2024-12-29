@@ -5,11 +5,7 @@ from datetime import date, time, timedelta
 from asgiref.sync import sync_to_async
 from customers.models import CustomerProfile, ServiceItem, ServiceRequest, Vehicle
 from customers.serializers import ServiceRequestSerializer
-from customers.socket_io import (
-    get_pending_count,
-    get_today_appointments,
-    socket_manager,
-)
+from customers.socket_io import get_dashboard_schedule, socket_manager
 from django.contrib.auth.models import User
 from django.core.management.base import BaseCommand
 
@@ -45,21 +41,13 @@ class Command(BaseCommand):
                 appointment_data,
             )
 
-            # Update pending count
-            pending_count = await get_pending_count()
-            await socket_manager.emit_to_namespace(
-                "appointments",
-                "pending_count_updated",
-                {"count": pending_count},
-            )
-
             # Update today's appointments if the appointment is for today
             if appointment.appointment_date == date.today():
-                today_appointments = await get_today_appointments()
+                schedule_data = await get_dashboard_schedule()
                 await socket_manager.emit_to_namespace(
                     "appointments",
-                    "today_appointments_updated",
-                    today_appointments,
+                    "dashboard_schedule_updated",
+                    schedule_data,
                 )
         except Exception as e:
             self.stdout.write(self.style.ERROR(f"Error emitting socket events: {e}"))

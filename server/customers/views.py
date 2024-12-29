@@ -1,132 +1,126 @@
-import logging
+import asyncio
 import zoneinfo
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Union
 
-from django.contrib.auth import authenticate
-from django.db import transaction
+from django.conf import settings
+from django.contrib.auth.models import User
+from django.core.cache import cache
+from django.db import models, transaction
+from django.db.models import Q
+from django.http import Http404
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from rest_framework import permissions, status, viewsets
+from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.request import Request
 from rest_framework.response import Response
-from rest_framework_simplejwt.tokens import RefreshToken
 
-from .cache import AppointmentCache, WorkflowCache
+from .cache import AppointmentCache
 from .models import (
     BusinessHours,
-    Comment,
     CustomerProfile,
-    Label,
     ServiceItem,
     ServiceRequest,
+    SystemSettings,
+    Vehicle,
 )
+from .permissions import IsStaffOrOwner
 from .serializers import (
-    CommentSerializer,
     CustomerProfileSerializer,
-    LabelSerializer,
+    ServiceItemSerializer,
     ServiceRequestSerializer,
+    VehicleSerializer,
 )
-from .socket_io import get_pending_count, get_today_appointments, socket_manager
-
-logger = logging.getLogger(__name__)
+from .socket_io import get_dashboard_schedule, socket_manager
 
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def register_customer(request):
-    print("Received registration data:", request.data)  # Debug print
-    serializer = CustomerProfileSerializer(data=request.data)
-
-    if not serializer.is_valid():
-        print("Validation errors:", serializer.errors)  # Debug print
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
+    """Register a new customer"""
     try:
-        customer = serializer.save()
-        refresh = RefreshToken.for_user(customer.user)
-
-        return Response(
-            {
-                "user": CustomerProfileSerializer(customer).data,
-                "token": {
-                    "access": str(refresh.access_token),
-                    "refresh": str(refresh),
+        serializer = CustomerProfileSerializer(data=request.data)
+        if serializer.is_valid():
+            profile = serializer.save()
+            return Response(
+                {
+                    "message": "Registration successful",
+                    "data": CustomerProfileSerializer(profile).data,
                 },
-            },
-            status=status.HTTP_201_CREATED,
+                status=status.HTTP_201_CREATED,
+            )
+        return Response(
+            {"message": "Registration failed", "errors": serializer.errors},
+            status=status.HTTP_400_BAD_REQUEST,
         )
     except Exception as e:
-        print("Error during registration:", str(e))  # Debug print
-        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"message": "Registration failed", "error": str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def login_customer(request):
-    email = request.data.get("email")
-    password = request.data.get("password")
+    """Login a customer or staff member"""
+    try:
+        email = request.data.get("email")
+        password = request.data.get("password")
 
-    if not email or not password:
-        return Response(
-            {"message": "Please provide both email and password"},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    # Try authenticating with email as username first
-    user = authenticate(username=email, password=password)
-
-    # If that fails, try to find user by email and authenticate with their username
-    if not user:
-        try:
-            from django.contrib.auth.models import User
-
-            user_obj = User.objects.get(email=email)
-            user = authenticate(username=user_obj.username, password=password)
-        except User.DoesNotExist:
-            pass
-
-    if user:
-        refresh = RefreshToken.for_user(user)
-
-        # Add user role information
-        user_data = {
-            "email": user.email,
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "is_staff": user.is_staff,
-            "is_superuser": user.is_superuser,
-            "groups": list(user.groups.values_list("name", flat=True)),
-        }
-
-        # Don't require CustomerProfile for staff/superusers
-        if user.is_staff or user.is_superuser:
+        if not email or not password:
             return Response(
-                {
-                    "message": "Login successful",
-                    "data": {
-                        "user": user_data,
-                        "token": {
-                            "access": str(refresh.access_token),
-                            "refresh": str(refresh),
-                        },
-                    },
-                }
+                {"message": "Email and password are required"},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
-            customer = CustomerProfile.objects.get(user=user)
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response(
+                {"message": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        if not user.check_password(password):
+            return Response(
+                {"message": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        # If user is staff, return staff data
+        if user.is_staff:
+            from rest_framework_simplejwt.tokens import RefreshToken
+
+            refresh = RefreshToken.for_user(user)
             return Response(
                 {
                     "message": "Login successful",
                     "data": {
-                        "user": user_data,
+                        "user": {
+                            "id": user.id,
+                            "email": user.email,
+                            "first_name": user.first_name,
+                            "last_name": user.last_name,
+                            "is_staff": user.is_staff,
+                        },
                         "token": {
                             "access": str(refresh.access_token),
                             "refresh": str(refresh),
                         },
                     },
-                }
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # For non-staff users, check customer profile
+        try:
+            profile = user.customerprofile
+            serializer = CustomerProfileSerializer(profile)
+            return Response(
+                {"message": "Login successful", "data": serializer.data},
+                status=status.HTTP_200_OK,
             )
         except CustomerProfile.DoesNotExist:
             return Response(
@@ -134,53 +128,73 @@ def login_customer(request):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-    return Response(
-        {"message": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED
-    )
+    except Exception as e:
+        return Response(
+            {"message": "Login failed", "error": str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
 
 class ServiceRequestViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing service requests.
+    """
+
     serializer_class = ServiceRequestSerializer
-    permission_classes = [IsAuthenticated]
-    basename = "service-request"
+    permission_classes = [IsAuthenticated, IsStaffOrOwner]
 
-    @action(detail=False, methods=["get"], url_path="business-hours")
-    def business_hours(self, request):
-        """Get business hours configuration"""
+    def get_queryset(self):
+        """
+        Filter queryset based on user role and query parameters.
+        Staff can see all requests, customers can only see their own.
+        """
+        queryset = ServiceRequest.objects.select_related(
+            "customer__user", "vehicle"
+        ).prefetch_related("services")
+
+        if not self.request.user.is_staff:
+            queryset = queryset.filter(customer__user=self.request.user)
+
+        # Filter by status if provided
+        status_param = self.request.query_params.get("status")
+        if status_param:
+            queryset = queryset.filter(status=status_param)
+
+        # Filter by date if provided
+        date_param = self.request.query_params.get("date")
+        if date_param:
+            try:
+                target_date = datetime.strptime(date_param, "%Y-%m-%d").date()
+                queryset = queryset.filter(appointment_date=target_date)
+            except ValueError:
+                raise ValidationError("Invalid date format. Use YYYY-MM-DD")
+
+        return queryset.order_by("-created_at")
+
+    @action(detail=False, methods=["get"])
+    def today(self, request):
+        """Get today's appointments"""
         try:
-            business_hours = BusinessHours.objects.all().order_by("day_of_week")
-            hours_data = []
+            from datetime import date
 
-            for bh in business_hours:
-                hours_data.append(
-                    {
-                        "day": dict(BusinessHours.DAYS_OF_WEEK)[bh.day_of_week],
-                        "day_of_week": bh.day_of_week,
-                        "is_open": bh.is_open,
-                        "start_time": (
-                            bh.start_time.strftime("%H:%M") if bh.start_time else None
-                        ),
-                        "end_time": (
-                            bh.end_time.strftime("%H:%M") if bh.end_time else None
-                        ),
-                        "allow_after_hours_dropoff": bh.allow_after_hours_dropoff,
-                    }
-                )
-
-            return Response(hours_data)
+            today = date.today()
+            appointments = (
+                ServiceRequest.objects.filter(appointment_date=today)
+                .select_related("customer__user", "vehicle")
+                .prefetch_related("services")
+                .order_by("appointment_time")
+            )
+            serializer = ServiceRequestSerializer(appointments, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
-            logger.error(f"Error fetching business hours: {e}")
             return Response(
-                {"error": "Failed to fetch business hours"},
+                {"error": f"Error retrieving today's appointments: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
     def validate_appointment_time(self, date_str, time_str):
         """Validate that the appointment time is valid and available"""
         try:
-            # Debug logging
-            print(f"Validating appointment - Date: {date_str}, Time: {time_str}")
-
             # Parse the incoming time (24-hour format HH:mm)
             hour, minute = map(int, time_str.split(":"))
 
@@ -189,28 +203,22 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
 
             # Get current time in shop's timezone
             now = timezone.now().astimezone(shop_tz)
-            print(f"Current time in shop timezone: {now}")
 
             # Create appointment datetime in shop's timezone
             appointment_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-            print(f"Appointment date: {appointment_date}")
-            print(f"Current date in shop timezone: {now.date()}")
 
             # Explicitly check if this is a future date
             is_future_date = appointment_date > now.date()
-            print(f"Is future date: {is_future_date}")
 
             # Create the full appointment datetime
             appointment_datetime = datetime.combine(
-                appointment_date, time(hour, minute)
+                appointment_date, datetime.strptime(time_str, "%H:%M").time()
             )
             appointment_datetime = timezone.make_aware(appointment_datetime, shop_tz)
-            print(f"Full appointment datetime: {appointment_datetime}")
 
             # Only apply 10-minute buffer for same-day appointments
             if not is_future_date:
                 min_appointment_time = now + timedelta(minutes=10)
-                print(f"Minimum appointment time: {min_appointment_time}")
                 if appointment_datetime < min_appointment_time:
                     raise ValidationError(
                         "Same-day appointments must be at least 10 minutes in the future"
@@ -232,8 +240,8 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
                 else:
                     raise ValidationError(
                         f"Appointments must be scheduled during business hours: "
-                        f"{business_hours.start_time.strftime('%I:%M %p')} - "
-                        f"{business_hours.end_time.strftime('%I:%M %p')}"
+                        f'{business_hours.start_time.strftime("%I:%M %p")} - '
+                        f'{business_hours.end_time.strftime("%I:%M %p")}'
                     )
 
             # 10-minute interval check
@@ -245,148 +253,114 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
             return appointment_datetime
 
         except ValueError as e:
-            print(f"Validation error: {str(e)}")
             raise ValidationError(f"Invalid date or time format: {str(e)}")
         except Exception as e:
-            print(f"Unexpected error: {str(e)}")
             raise ValidationError(str(e))
 
-    def create(self, request, *args, **kwargs):
-        try:
-            # Debug logging
-            print("User:", request.user)
-            print("Is authenticated:", request.user.is_authenticated)
-
-            # Validate customer profile exists
-            try:
-                # Check if customer profile exists without assigning it
-                request.user.customerprofile
-            except CustomerProfile.DoesNotExist:
-                return Response(
-                    {"detail": "Customer profile not found"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            # Validate appointment time before creating request
-            date = request.data.get("appointment_date")
-            time = request.data.get("appointment_time")
-            self.validate_appointment_time(date, time)
-
-            serializer = self.get_serializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            self.perform_create(serializer)
-
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        except Exception as e:
-            print(f"Error in create view: {str(e)}")
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-    def get_queryset(self):
-        if self.request.user.is_staff:
-            return ServiceRequest.objects.all().order_by("-created_at")
-        return ServiceRequest.objects.filter(
-            customer=self.request.user.customerprofile
-        ).order_by("-created_at")
-
     def perform_create(self, serializer):
-        """Called when a service request is created"""
-        instance = serializer.save()
-        logger.info(f"New appointment created with ID: {instance.id}")
+        """Create a new service request"""
+        try:
+            # Get or create customer profile
+            customer, _ = CustomerProfile.objects.get_or_create(user=self.request.user)
 
-        # Emit socket events for real-time updates
-        async def emit_updates():
-            try:
-                logger.info("Starting socket event emissions...")
+            # Get or create vehicle
+            vehicle_data = self.request.data.get("vehicle", {})
+            if not vehicle_data:
+                raise ValidationError("Vehicle information is required")
 
-                # Emit the new appointment
-                logger.info("Preparing appointment data for emission...")
-                appointment_data = ServiceRequestSerializer(instance).data
-                logger.info(f"Appointment data prepared: {appointment_data}")
+            vehicle, _ = Vehicle.objects.get_or_create(
+                make=vehicle_data.get("make"),
+                model=vehicle_data.get("model"),
+                year=vehicle_data.get("year"),
+            )
 
-                logger.info("Emitting appointment_created event...")
-                await socket_manager.emit_to_namespace(
-                    "appointments",
-                    "appointment_created",
-                    appointment_data,
+            # Validate appointment time
+            appointment_date = self.request.data.get("appointment_date")
+            appointment_time = self.request.data.get("appointment_time")
+            if not appointment_date or not appointment_time:
+                raise ValidationError("Appointment date and time are required")
+
+            self.validate_appointment_time(appointment_date, appointment_time)
+
+            # Create service request
+            service_request = serializer.save(
+                customer=customer,
+                vehicle=vehicle,
+                status="pending",
+            )
+
+            # Create service items
+            services_data = self.request.data.get("services", [])
+            for service_data in services_data:
+                ServiceItem.objects.create(
+                    service_request=service_request,
+                    service_type=service_data.get("service_type"),
+                    description=service_data.get("description", ""),
+                    urgency=service_data.get("urgency", "low"),
                 )
-                logger.info("Successfully emitted appointment_created event")
 
-                # Update pending count
-                logger.info("Getting pending count...")
-                pending_count = await get_pending_count()
-                logger.info(f"Got pending count: {pending_count}")
+            # Update cache and send notifications
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(service_request.update_cache_and_notify())
+            loop.close()
 
-                logger.info("Emitting pending_count_updated event...")
-                await socket_manager.emit_to_namespace(
-                    "appointments", "pending_count_updated", {"count": pending_count}
-                )
-                logger.info("Successfully emitted pending_count_updated event")
-
-                # Update today's appointments if the new appointment is for today
-                if instance.appointment_date == timezone.now().date():
-                    logger.info(
-                        "Appointment is for today, getting today's appointments..."
-                    )
-                    today_data = await get_today_appointments()
-                    logger.info(f"Got today's appointments: {today_data}")
-
-                    logger.info("Emitting today_appointments_updated event...")
-                    await socket_manager.emit_to_namespace(
-                        "appointments", "today_appointments_updated", today_data
-                    )
-                    logger.info("Successfully emitted today_appointments_updated event")
-                else:
-                    logger.info(
-                        "Appointment is not for today, skipping today's appointments update"
-                    )
-
-                logger.info("Successfully completed all socket event emissions")
-            except Exception as e:
-                logger.error(f"Error emitting socket events: {str(e)}")
-                logger.exception(e)
-
-        import asyncio
-
-        logger.info("Creating async task for socket events...")
-        asyncio.create_task(emit_updates())
-        logger.info("Created async task for socket events")
-        return instance
+        except ValidationError as e:
+            raise e
+        except Exception as e:
+            raise ValidationError(f"Error creating service request: {str(e)}")
 
     @action(detail=False, methods=["get"])
     def available_slots(self, request):
-        date_str = request.query_params.get("date")
-        if not date_str:
-            return Response(
-                {"error": "Date parameter is required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
+        """
+        Get available appointment slots for a given date
+        """
         try:
-            # Parse the requested date
-            requested_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            # Get requested date
+            date_param = request.query_params.get("date")
+            if not date_param:
+                raise ValidationError("Date parameter is required")
+
+            try:
+                requested_date = datetime.strptime(date_param, "%Y-%m-%d").date()
+            except ValueError:
+                raise ValidationError("Invalid date format. Use YYYY-MM-DD")
+
+            # Get shop's timezone
             shop_tz = zoneinfo.ZoneInfo("America/New_York")
+
+            # Get current time in shop's timezone
             current_datetime = timezone.now().astimezone(shop_tz)
 
-            # Get business hours for the requested day
-            day_of_week = requested_date.weekday()
-            try:
-                business_hours = BusinessHours.objects.get(day_of_week=day_of_week)
-                if not business_hours.is_open:
-                    return Response([])  # Return empty list for closed days
-            except BusinessHours.DoesNotExist:
-                return Response([])  # Return empty list if no business hours set
+            # Check if requested date is in the past
+            if requested_date < current_datetime.date():
+                raise ValidationError("Cannot schedule appointments for past dates")
 
-            # Check if requested date is today or future
+            # Check if requested date is more than 30 days in the future
+            max_future_date = current_datetime.date() + timedelta(days=30)
+            if requested_date > max_future_date:
+                raise ValidationError(
+                    "Cannot schedule appointments more than 30 days in advance"
+                )
+
+            # Check if it's the next day
             is_next_day = requested_date > current_datetime.date()
 
-            # Generate base time slots based on business hours
-            time_slots = []
-            if business_hours.start_time and business_hours.end_time:
-                start_hour = business_hours.start_time.hour
-                end_hour = business_hours.end_time.hour
-                start_minute = business_hours.start_time.minute
-                end_minute = business_hours.end_time.minute
+            # Get business hours for the requested date
+            business_hours = BusinessHours.objects.get(
+                day_of_week=requested_date.weekday()
+            )
 
+            if not business_hours.is_open:
+                return Response(
+                    {"message": "Business is closed on this day", "slots": []},
+                    status=status.HTTP_200_OK,
+                )
+
+            time_slots = []
+
+            if business_hours.start_time and business_hours.end_time:
+                # Create time slots at 10-minute intervals
                 current_time = datetime.combine(
                     requested_date, business_hours.start_time
                 )
@@ -410,231 +384,85 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
                     time_slots.append(formatted_time)
                     current_time = current_time + timedelta(minutes=10)
 
-            # Remove booked slots
-            booked_slots = ServiceRequest.objects.filter(
-                appointment_date=requested_date
-            ).values_list("appointment_time", flat=True)
-            booked_slots = [slot.strftime("%I:%M %p") for slot in booked_slots]
-
-            available_slots = [slot for slot in time_slots if slot not in booked_slots]
-
-            return Response(available_slots)
-
-        except ValueError:
-            return Response(
-                {"error": "Invalid date format. Use YYYY-MM-DD"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        except Exception as e:
-            logger.error(f"Error generating available slots: {e}")
-            return Response(
-                {"error": "Failed to generate available slots"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-    @action(detail=False, methods=["get"], url_path="pending/count")
-    def pending_count(self, request):
-        """Get count of pending appointments, using cache"""
-        logger.debug(f"Accessing pending_count endpoint. User: {request.user}")
-        try:
-            # Get count from cache
-            count = AppointmentCache.get_pending_count()
-            if count is None:
-                # Fallback to database if cache fails
-                count = ServiceRequest.objects.filter(status="pending").count()
-
-            logger.debug(f"Found {count} pending requests")
-            return Response({"count": count})
-        except Exception as e:
-            logger.error(f"Error in pending_count: {str(e)}")
-            return Response({"error": str(e)}, status=500)
-
-    @action(detail=False, methods=["get"], url_path="today")
-    def today(self, request):
-        today = timezone.now().date()
-        appointments = (
-            ServiceRequest.objects.filter(appointment_date=today)
-            .select_related("customer", "vehicle")
-            .order_by("appointment_time")
-        )
-        serializer = self.get_serializer(appointments, many=True)
-        return Response(serializer.data)
-
-
-class WorkflowViewSet(viewsets.ViewSet):
-    """
-    ViewSet for workflow board operations
-    """
-
-    permission_classes = [IsAuthenticated, IsAdminUser]  # Only staff can access
-
-    def list(self, request):
-        """Get the current board state"""
-        try:
-            # Get board state from cache/DB
-            board_state = WorkflowCache.get_board_state()
-
-            # Get full service request data for each ID
-            columns = {}
-            for column, request_ids in board_state.items():
-                requests = ServiceRequest.objects.filter(id__in=request_ids)
-                serializer = ServiceRequestSerializer(requests, many=True)
-                columns[column] = serializer.data
-
             return Response(
                 {
-                    "columns": columns,
-                    "column_order": [
-                        c[0] for c in ServiceRequest.WORKFLOW_COLUMN_CHOICES
-                    ],
-                }
+                    "message": "Available time slots retrieved successfully",
+                    "slots": time_slots,
+                },
+                status=status.HTTP_200_OK,
             )
 
-        except Exception as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    @action(detail=True, methods=["post"])
-    def move_card(self, request, pk=None):
-        """Move a card to a new position/column"""
-        try:
-            service_request = ServiceRequest.objects.get(pk=pk)
-
-            # Validate input
-            to_column = request.data.get("to_column")
-            position = request.data.get("position", 0)
-
-            if not to_column:
-                return Response(
-                    {"error": "to_column is required"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            # Update the model
-            with transaction.atomic():
-                # Get next position if not specified
-                if position is None:
-                    position = WorkflowCache.get_next_position(to_column)
-
-                # Update model
-                service_request.workflow_column = to_column
-                service_request.workflow_position = position
-                service_request.save()
-
-                # Update cache
-                WorkflowCache.move_card(service_request.id, to_column, position)
-
-                # Serialize response
-                serializer = ServiceRequestSerializer(service_request)
-                return Response(serializer.data)
-
-        except ServiceRequest.DoesNotExist:
-            return Response(
-                {"error": "Service request not found"}, status=status.HTTP_404_NOT_FOUND
-            )
         except ValidationError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {"error": f"Error retrieving available slots: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class WorkflowViewSet(viewsets.ViewSet):
+    """
+    ViewSet for managing workflow operations.
+    """
+
+    permission_classes = [IsAuthenticated, IsStaffOrOwner]
+
+    @action(detail=False, methods=["get"])
+    def columns(self, request):
+        """Get workflow columns with their service requests"""
+        try:
+            workflow_data = {}
+            for column, _ in ServiceRequest.WORKFLOW_COLUMN_CHOICES:
+                requests = (
+                    ServiceRequest.objects.filter(workflow_column=column)
+                    .select_related("customer__user", "vehicle")
+                    .prefetch_related("services", "comments", "labels")
+                    .order_by("workflow_position")
+                )
+
+                serializer = ServiceRequestSerializer(requests, many=True)
+                workflow_data[column] = serializer.data
+
+            return Response(workflow_data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {"error": f"Error retrieving workflow data: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
     @action(detail=True, methods=["post"])
-    def comments(self, request, pk=None):
-        """Add a comment to a service request"""
+    def move(self, request, pk=None):
+        """Move a service request to a different workflow column"""
         try:
-            service_request = ServiceRequest.objects.get(pk=pk)
-            text = request.data.get("text")
+            service_request = get_object_or_404(ServiceRequest, pk=pk)
+            new_column = request.data.get("column")
+            new_position = request.data.get("position", 0)
 
-            if not text:
-                return Response(
-                    {"error": "Comment text is required"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+            if not new_column:
+                raise ValidationError("New column is required")
 
-            comment = Comment.objects.create(
-                service_request=service_request, user=request.user, text=text
-            )
+            if new_column not in dict(ServiceRequest.WORKFLOW_COLUMN_CHOICES):
+                raise ValidationError("Invalid workflow column")
 
-            serializer = CommentSerializer(comment)
-            return Response(serializer.data)
+            with transaction.atomic():
+                # Update positions of other items in the target column
+                ServiceRequest.objects.filter(
+                    workflow_column=new_column, workflow_position__gte=new_position
+                ).update(workflow_position=models.F("workflow_position") + 1)
 
-        except ServiceRequest.DoesNotExist:
-            return Response(
-                {"error": "Service request not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+                # Move the service request
+                service_request.workflow_column = new_column
+                service_request.workflow_position = new_position
+                service_request.save()
+
+            serializer = ServiceRequestSerializer(service_request)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except ValidationError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    @action(detail=True, methods=["delete"])
-    def delete_comment(self, request, pk=None, comment_pk=None):
-        """Delete a comment"""
-        try:
-            comment = Comment.objects.get(pk=comment_pk, service_request_id=pk)
-
-            # Only allow comment deletion by the comment author or staff
-            if comment.user != request.user and not request.user.is_staff:
-                return Response(
-                    {"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN
-                )
-
-            comment.delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
-
-        except Comment.DoesNotExist:
-            return Response(
-                {"error": "Comment not found"}, status=status.HTTP_404_NOT_FOUND
-            )
-        except Exception as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    @action(detail=True, methods=["post"])
-    def labels(self, request, pk=None):
-        """Add a label to a service request"""
-        try:
-            service_request = ServiceRequest.objects.get(pk=pk)
-            label_name = request.data.get("label")
-
-            if not label_name:
-                return Response(
-                    {"error": "Label name is required"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            label, created = Label.objects.get_or_create(
-                service_request=service_request, name=label_name
-            )
-
-            serializer = LabelSerializer(label)
-            return Response(serializer.data)
-
-        except ServiceRequest.DoesNotExist:
-            return Response(
-                {"error": "Service request not found"}, status=status.HTTP_404_NOT_FOUND
-            )
-        except Exception as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    @action(detail=True, methods=["delete"])
-    def delete_label(self, request, pk=None, label_name=None):
-        """Delete a label"""
-        try:
-            label = Label.objects.get(service_request_id=pk, name=label_name)
-            label.delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
-
-        except Label.DoesNotExist:
-            return Response(
-                {"error": "Label not found"}, status=status.HTTP_404_NOT_FOUND
-            )
-        except Exception as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {"error": f"Error moving service request: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

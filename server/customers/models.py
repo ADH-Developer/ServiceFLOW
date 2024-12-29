@@ -131,10 +131,6 @@ class ServiceRequest(models.Model):
     async def update_cache_and_notify(self):
         try:
             logger.info("Starting update_cache_and_notify")
-            # Get new pending count
-            pending_count = ServiceRequest.objects.filter(status="pending").count()
-            logger.info(f"Got pending count: {pending_count}")
-
             # Get today's appointments
             from datetime import date
 
@@ -154,7 +150,6 @@ class ServiceRequest(models.Model):
             # Update cache
             try:
                 logger.info("Updating cache...")
-                cache.set("pending_appointments_count", pending_count, 300)
                 cache.set("today_appointments", appointments_data, 300)
                 logger.info("Cache updated successfully")
             except Exception as e:
@@ -163,21 +158,15 @@ class ServiceRequest(models.Model):
             # Send Socket.IO notifications
             try:
                 logger.info("Sending Socket.IO notifications...")
-
-                # Send pending count update
                 await socket_manager.emit_to_namespace(
-                    "appointments", "pending_count_updated", {"count": pending_count}
+                    "appointments",
+                    "dashboard_schedule_updated",
+                    appointments_data,
                 )
-
-                # Send today's appointments update
-                await socket_manager.emit_to_namespace(
-                    "appointments", "today_appointments_updated", appointments_data
-                )
-                logger.info("Sent today's appointments update")
+                logger.info("Sent dashboard schedule update")
             except Exception as e:
                 logger.error(f"Error sending Socket.IO notification: {e}")
 
-            return pending_count
         except Exception as e:
             logger.error(f"Error in update_cache_and_notify: {e}")
             return None
@@ -344,44 +333,37 @@ class SystemSettings(models.Model):
     def save(self, *args, **kwargs):
         if self.auto_confirm_appointments:
             # Get count of pending appointments
-            pending_count = ServiceRequest.objects.filter(status="pending").count()
+            pending_appointments = ServiceRequest.objects.filter(status="pending")
+            count = pending_appointments.count()
 
-            if pending_count > 0:
+            if count > 0:
                 # Update all pending appointments to confirmed
-                ServiceRequest.objects.filter(status="pending").update(
+                pending_appointments.update(
                     status="confirmed", workflow_column="estimates"
                 )
 
-                # Update cache
+                # Update cache and notify
                 try:
-                    # Update pending count in cache
-                    cache.set("pending_appointments_count", 0, 300)
-                    logger.info(f"Auto-confirmed {pending_count} pending appointments")
+                    from asgiref.sync import async_to_sync
+
+                    async_to_sync(self.notify_auto_confirm)()
+                    logger.info(f"Auto-confirmed {count} pending appointments")
                 except Exception as e:
-                    logger.error(f"Error updating cache after auto-confirmation: {e}")
+                    logger.error(f"Error sending auto-confirm notification: {e}")
 
         # Ensure only one instance exists
         self.__class__.objects.exclude(id=self.id).delete()
         super().save(*args, **kwargs)
 
-        # After saving, trigger async notification if needed
-        if self.auto_confirm_appointments and pending_count > 0:
-            from asgiref.sync import async_to_sync
-
-            try:
-                async_to_sync(self.notify_auto_confirm)(pending_count)
-            except Exception as e:
-                logger.error(f"Error sending auto-confirm notification: {e}")
-
-    async def notify_auto_confirm(self, pending_count):
+    async def notify_auto_confirm(self):
         """Send notifications about auto-confirmed appointments"""
         try:
+            # Get updated schedule
+            schedule_data = await get_dashboard_schedule()
             await socket_manager.emit_to_namespace(
-                "appointments", "pending_count_updated", {"count": 0}
+                "appointments", "dashboard_schedule_updated", schedule_data
             )
-            logger.info(
-                f"Sent notification for {pending_count} auto-confirmed appointments"
-            )
+            logger.info("Sent notification for auto-confirmed appointments")
         except Exception as e:
             logger.error(f"Error sending auto-confirm notification: {e}")
 
