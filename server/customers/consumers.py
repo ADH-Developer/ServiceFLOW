@@ -5,6 +5,8 @@ from urllib.parse import parse_qs
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.contrib.auth import get_user_model
+from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import AccessToken
@@ -245,15 +247,59 @@ class WorkflowConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def update_card_position(self, data):
         try:
-            service_request = ServiceRequest.objects.get(id=data["card_id"])
-            service_request.workflow_column = data["new_status"]
-            service_request.save()
-            return True
-        except ServiceRequest.DoesNotExist:
-            logger.error(f"Service request {data.get('card_id')} not found")
+            from django.db import transaction
+            from django.db.models import F
+
+            from .models import ServiceRequest
+
+            with transaction.atomic():
+                # Get the service request to move
+                service_request = ServiceRequest.objects.select_for_update().get(
+                    id=data["card_id"]
+                )
+                old_column = service_request.workflow_column
+                new_column = data["new_status"]
+
+                if old_column != new_column:
+                    # First, update positions in the old column
+                    ServiceRequest.objects.filter(
+                        workflow_column=old_column,
+                        workflow_position__gt=service_request.workflow_position,
+                    ).update(workflow_position=F("workflow_position") - 1)
+
+                    # Get the highest position in the new column
+                    max_position = (
+                        ServiceRequest.objects.filter(
+                            workflow_column=new_column
+                        ).aggregate(models.Max("workflow_position"))[
+                            "workflow_position__max"
+                        ]
+                        or -1
+                    )
+
+                    # Update the moved card
+                    service_request.workflow_column = new_column
+                    service_request.workflow_position = max_position + 1
+                    service_request.save()
+
+                    # Update cache
+                    from .cache import WorkflowCache
+
+                    WorkflowCache.move_card(
+                        service_request.id,
+                        new_column,
+                        service_request.workflow_position,
+                    )
+
+                    logger.info(
+                        f"Card {service_request.id} moved to {new_column} at position {service_request.workflow_position}"
+                    )
+                    return True
+
             return False
+
         except Exception as e:
-            logger.error(f"Error updating card position: {e}")
+            logger.error(f"Error moving card {data['card_id']}: {e}")
             return False
 
     async def workflow_update(self, event):

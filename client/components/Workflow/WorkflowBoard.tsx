@@ -33,8 +33,14 @@ const transformBoardData = (data: any): BoardState => {
     const transformed: BoardState = {};
     Object.entries(data).forEach(([key, value]) => {
         // Filter out any invalid cards
-        const validCards = (value as any[]).filter(card => card && card.id && typeof card.id !== 'undefined');
-        transformed[key] = validCards as ServiceRequest[];
+        const validCards = (value as any[]).filter(card =>
+            card &&
+            card.id &&
+            typeof card.id !== 'undefined' &&
+            card.customer &&  // Ensure we have the full card data
+            card.vehicle
+        );
+        transformed[key] = validCards;
     });
     return transformed;
 };
@@ -184,12 +190,19 @@ const WorkflowBoard: React.FC = () => {
                     // Update local state optimistically
                     setBoardState(prev => {
                         const newState = { ...prev };
-                        const card = newState[oldColumn].find(c => c.id.toString() === activeId);
+                        const cardIndex = newState[oldColumn].findIndex(c => c.id.toString() === activeId);
 
-                        if (card) {
-                            newState[oldColumn] = newState[oldColumn].filter(c => c.id.toString() !== activeId);
+                        if (cardIndex !== -1) {
+                            const [card] = newState[oldColumn].splice(cardIndex, 1);
                             if (!newState[newColumn]) newState[newColumn] = [];
-                            newState[newColumn].push({ ...card, status: newColumn as WorkflowStatus });
+                            const newPosition = newState[newColumn].length;
+
+                            // Preserve all card data while updating position and status
+                            newState[newColumn].push({
+                                ...card,
+                                workflow_position: newPosition,
+                                workflow_column: newColumn as WorkflowStatus
+                            });
                         }
 
                         return newState;
@@ -199,7 +212,8 @@ const WorkflowBoard: React.FC = () => {
                     const message = {
                         type: 'card_moved',
                         card_id: activeId,
-                        new_status: newColumn
+                        new_status: newColumn,
+                        position: boardState[newColumn]?.length || 0
                     };
 
                     console.log('Sending WebSocket message:', message);
@@ -243,7 +257,10 @@ const WorkflowBoard: React.FC = () => {
                             key={columnId}
                             id={columnId}
                             title={columnId.replace('_', ' ').toUpperCase()}
-                            cards={boardState[columnId] || []}
+                            cards={boardState[columnId]?.map(card => ({
+                                ...card,
+                                id: card.id.toString()
+                            })) || []}
                             color={COLUMN_COLORS[columnId as keyof typeof COLUMN_COLORS]}
                             onCardClick={(card) => {
                                 setSelectedCard(card);

@@ -459,11 +459,26 @@ class WorkflowViewSet(viewsets.ViewSet):
 
             # Get full service request data for each ID
             columns = {}
-            for column, request_ids in board_state.items():
-                if request_ids:  # Only query if there are IDs
+            for column, cards in board_state.items():
+                if cards:  # Only query if there are cards
+                    # Extract IDs from the card objects
+                    request_ids = [card["id"] for card in cards]
                     requests = ServiceRequest.objects.filter(id__in=request_ids)
-                    serializer = ServiceRequestSerializer(requests, many=True)
-                    columns[column] = serializer.data
+
+                    # Create a mapping of id to position
+                    position_map = {card["id"]: card["position"] for card in cards}
+
+                    # Serialize and add position information
+                    serialized_requests = ServiceRequestSerializer(
+                        requests, many=True
+                    ).data
+                    for req in serialized_requests:
+                        req["workflow_position"] = position_map.get(req["id"], 0)
+
+                    # Sort by position
+                    columns[column] = sorted(
+                        serialized_requests, key=lambda x: x["workflow_position"]
+                    )
                 else:
                     columns[column] = []  # Empty column
 

@@ -136,7 +136,11 @@ class WorkflowCache:
                     .prefetch_related("services")
                     .order_by("workflow_position")
                 )
-                columns[column] = list(requests.values_list("id", flat=True))
+                # Store both id and position to maintain order
+                columns[column] = [
+                    {"id": req.id, "position": req.workflow_position}
+                    for req in requests
+                ]
 
             # Cache the result
             cache.set(cls.BOARD_KEY, columns, timeout=3600)  # 1 hour timeout
@@ -154,9 +158,13 @@ class WorkflowCache:
             board_state = cls.get_board_state()
 
             # Find and remove card from current column
+            card_data = None
             for column, cards in board_state.items():
-                if request_id in cards:
-                    cards.remove(request_id)
+                for i, card in enumerate(cards):
+                    if card["id"] == request_id:
+                        card_data = cards.pop(i)
+                        break
+                if card_data:
                     break
 
             # Add card to new column at position
@@ -164,10 +172,12 @@ class WorkflowCache:
                 board_state[to_column] = []
 
             target_column = board_state[to_column]
+            new_card_data = {"id": request_id, "position": position}
+
             if position >= len(target_column):
-                target_column.append(request_id)
+                target_column.append(new_card_data)
             else:
-                target_column.insert(position, request_id)
+                target_column.insert(position, new_card_data)
 
             # Update cache
             cache.set(cls.BOARD_KEY, board_state, timeout=3600)
@@ -181,14 +191,14 @@ class WorkflowCache:
     def get_next_position(cls, column: str) -> int:
         """Get the next available position in a column"""
         try:
-            # Import here to avoid circular import
-            from .models import ServiceRequest
+            board_state = cls.get_board_state()
+            column_cards = board_state.get(column, [])
 
-            max_position = ServiceRequest.objects.filter(
-                workflow_column=column
-            ).aggregate(Max("workflow_position"))["workflow_position__max"]
+            if not column_cards:
+                return 0
 
-            return (max_position or -1) + 1
+            max_position = max(card["position"] for card in column_cards)
+            return max_position + 1
 
         except Exception as e:
             logger.error(f"Error getting next position: {e}")

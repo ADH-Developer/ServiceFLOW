@@ -37,6 +37,11 @@ const WorkflowColumn: React.FC<WorkflowColumnProps> = ({
         }
     });
 
+    // Sort cards by workflow_position
+    const sortedCards = [...cards].sort((a, b) =>
+        (a.workflow_position || 0) - (b.workflow_position || 0)
+    );
+
     return (
         <Box
             width="300px"
@@ -72,10 +77,10 @@ const WorkflowColumn: React.FC<WorkflowColumnProps> = ({
                 p={2}
             >
                 <SortableContext
-                    items={cards.filter(card => card && card.id).map(card => card.id.toString())}
+                    items={sortedCards.map(card => card.id.toString())}
                     strategy={verticalListSortingStrategy}
                 >
-                    {cards.filter(card => card && card.id).map((card) => (
+                    {sortedCards.map((card) => (
                         <SortableCard
                             key={card.id}
                             id={card.id.toString()}

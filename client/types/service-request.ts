@@ -49,4 +49,11 @@ export interface ServiceRequest {
     appointment_time: string;
     created_at: string;
     updated_at: string;
+    workflow_column: 'estimates' | 'in_progress' | 'waiting_parts' | 'completed';
+    workflow_position: number;
+    workflow_history: {
+        from_column: string;
+        to_column: string;
+        timestamp: string;
+    }[];
 } 
