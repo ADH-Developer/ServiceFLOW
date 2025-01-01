@@ -77,4 +77,4 @@ export const AppointmentsList = ({ appointments }: AppointmentsListProps) => {
             ))}
         </VStack>
     );
-}; 
+} 

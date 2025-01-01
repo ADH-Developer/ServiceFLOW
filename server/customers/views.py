@@ -2,6 +2,8 @@ import logging
 import zoneinfo
 from datetime import datetime, time, timedelta
 
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.contrib.auth import authenticate
 from django.db import transaction
 from django.utils import timezone
@@ -27,7 +29,6 @@ from .serializers import (
     LabelSerializer,
     ServiceRequestSerializer,
 )
-from .socket_io import get_pending_count, get_today_appointments, socket_manager
 
 logger = logging.getLogger(__name__)
 
@@ -289,68 +290,50 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
         ).order_by("-created_at")
 
     def perform_create(self, serializer):
-        """Called when a service request is created"""
-        instance = serializer.save()
-        logger.info(f"New appointment created with ID: {instance.id}")
+        with transaction.atomic():
+            service_request = serializer.save()
 
-        # Emit socket events for real-time updates
-        async def emit_updates():
-            try:
-                logger.info("Starting socket event emissions...")
-
-                # Emit the new appointment
-                logger.info("Preparing appointment data for emission...")
-                appointment_data = ServiceRequestSerializer(instance).data
-                logger.info(f"Appointment data prepared: {appointment_data}")
-
-                logger.info("Emitting appointment_created event...")
-                await socket_manager.emit_to_namespace(
+            # Send real-time update for appointments if it's for today
+            if service_request.appointment_date.date() == timezone.localtime().date():
+                channel_layer = get_channel_layer()
+                async_to_sync(channel_layer.group_send)(
                     "appointments",
-                    "appointment_created",
-                    appointment_data,
+                    {
+                        "type": "appointment_update",
+                        "action": "create",
+                        "appointment": ServiceRequestSerializer(service_request).data,
+                    },
                 )
-                logger.info("Successfully emitted appointment_created event")
 
-                # Update pending count
-                logger.info("Getting pending count...")
-                pending_count = await get_pending_count()
-                logger.info(f"Got pending count: {pending_count}")
+    def perform_update(self, serializer):
+        with transaction.atomic():
+            service_request = serializer.save()
 
-                logger.info("Emitting pending_count_updated event...")
-                await socket_manager.emit_to_namespace(
-                    "appointments", "pending_count_updated", {"count": pending_count}
+            # Send real-time update for appointments if it's for today
+            if service_request.appointment_date.date() == timezone.localtime().date():
+                channel_layer = get_channel_layer()
+                async_to_sync(channel_layer.group_send)(
+                    "appointments",
+                    {
+                        "type": "appointment_update",
+                        "action": "update",
+                        "appointment": ServiceRequestSerializer(service_request).data,
+                    },
                 )
-                logger.info("Successfully emitted pending_count_updated event")
 
-                # Update today's appointments if the new appointment is for today
-                if instance.appointment_date == timezone.now().date():
-                    logger.info(
-                        "Appointment is for today, getting today's appointments..."
-                    )
-                    today_data = await get_today_appointments()
-                    logger.info(f"Got today's appointments: {today_data}")
-
-                    logger.info("Emitting today_appointments_updated event...")
-                    await socket_manager.emit_to_namespace(
-                        "appointments", "today_appointments_updated", today_data
-                    )
-                    logger.info("Successfully emitted today_appointments_updated event")
-                else:
-                    logger.info(
-                        "Appointment is not for today, skipping today's appointments update"
-                    )
-
-                logger.info("Successfully completed all socket event emissions")
-            except Exception as e:
-                logger.error(f"Error emitting socket events: {str(e)}")
-                logger.exception(e)
-
-        import asyncio
-
-        logger.info("Creating async task for socket events...")
-        asyncio.create_task(emit_updates())
-        logger.info("Created async task for socket events")
-        return instance
+    def perform_destroy(self, instance):
+        # Send real-time update for appointments if it's for today
+        if instance.appointment_date.date() == timezone.localtime().date():
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                "appointments",
+                {
+                    "type": "appointment_update",
+                    "action": "delete",
+                    "appointment_id": instance.id,
+                },
+            )
+        instance.delete()
 
     @action(detail=False, methods=["get"])
     def available_slots(self, request):
@@ -497,47 +480,33 @@ class WorkflowViewSet(viewsets.ViewSet):
 
     @action(detail=True, methods=["post"])
     def move_card(self, request, pk=None):
-        """Move a card to a new position/column"""
         try:
             service_request = ServiceRequest.objects.get(pk=pk)
+            new_status = request.data.get("status")
 
-            # Validate input
-            to_column = request.data.get("to_column")
-            position = request.data.get("position", 0)
-
-            if not to_column:
+            if new_status not in dict(ServiceRequest.STATUS_CHOICES):
                 return Response(
-                    {"error": "to_column is required"},
-                    status=status.HTTP_400_BAD_REQUEST,
+                    {"error": "Invalid status"}, status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Update the model
-            with transaction.atomic():
-                # Get next position if not specified
-                if position is None:
-                    position = WorkflowCache.get_next_position(to_column)
+            service_request.status = new_status
+            service_request.save()
 
-                # Update model
-                service_request.workflow_column = to_column
-                service_request.workflow_position = position
-                service_request.save()
+            # Send real-time update for workflow
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                "workflow",
+                {
+                    "type": "card_position_update",
+                    "card_id": service_request.id,
+                    "new_status": new_status,
+                },
+            )
 
-                # Update cache
-                WorkflowCache.move_card(service_request.id, to_column, position)
-
-                # Serialize response
-                serializer = ServiceRequestSerializer(service_request)
-                return Response(serializer.data)
-
+            return Response(ServiceRequestSerializer(service_request).data)
         except ServiceRequest.DoesNotExist:
             return Response(
                 {"error": "Service request not found"}, status=status.HTTP_404_NOT_FOUND
-            )
-        except ValidationError as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
     @action(detail=True, methods=["post"])

@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "djoser",
     "drf_yasg",
+    "channels",
     "customers.apps.CustomersConfig",
 ]
 
@@ -231,8 +232,15 @@ CORS_ALLOW_HEADERS = [
     "x-requested-with",
 ]
 
-# Socket.IO settings
-SOCKETIO_CORS_ALLOWED_ORIGINS = ["http://localhost:3000"]
+# Channel layer settings
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [(os.environ.get("REDIS_HOST", "redis"), 6379)],
+        },
+    }
+}
 
 # Logging Configuration
 LOGGING = {
@@ -251,12 +259,7 @@ LOGGING = {
         },
     },
     "loggers": {
-        "customers.socket_io": {
-            "handlers": ["console"],
-            "level": "DEBUG",
-            "propagate": True,
-        },
-        "socketio": {
+        "django.channels": {
             "handlers": ["console"],
             "level": "DEBUG",
             "propagate": True,

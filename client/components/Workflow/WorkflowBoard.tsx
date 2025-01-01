@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Flex, useToast, Spinner, Text, Center } from '@chakra-ui/react';
+import { Box, Flex, useToast, Spinner, Text, Center, VStack, Alert, AlertIcon, Button } from '@chakra-ui/react';
 import {
     DndContext,
     DragEndEvent,
@@ -9,10 +9,10 @@ import {
     defaultDropAnimation,
 } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
-import { useSocketIO } from '../../hooks/useSocketIO';
+import { useWebSocket } from '../../hooks/useWebSocket';
 import WorkflowColumn from './WorkflowColumn';
 import type { ServiceRequest } from '../../types/service-request';
-import { workflowApi } from '../../lib/api-services';
+import { api } from '../../utils/api';
 import CardDetail from './CardDetail';
 import SortableCard from './SortableCard';
 
@@ -35,6 +35,31 @@ const transformBoardData = (data: any): BoardState => {
     return transformed;
 };
 
+const LoadingState = () => (
+    <Center h="calc(100vh - 200px)">
+        <VStack spacing={4}>
+            <Spinner size="xl" color="blue.500" thickness="4px" />
+            <Text color="gray.500">Loading workflow board...</Text>
+        </VStack>
+    </Center>
+);
+
+const ErrorState = ({ message, onRetry }: { message: string; onRetry: () => void }) => (
+    <Center h="calc(100vh - 200px)">
+        <VStack spacing={4}>
+            <Alert status="error" borderRadius="md">
+                <AlertIcon />
+                <VStack align="start" spacing={2}>
+                    <Text fontWeight="medium">{message}</Text>
+                    <Button size="sm" onClick={onRetry}>
+                        Try Again
+                    </Button>
+                </VStack>
+            </Alert>
+        </VStack>
+    </Center>
+);
+
 const WorkflowBoard: React.FC = () => {
     const [boardState, setBoardState] = useState<BoardState>({});
     const [columnOrder, setColumnOrder] = useState<string[]>([]);
@@ -44,55 +69,148 @@ const WorkflowBoard: React.FC = () => {
     const [activeCard, setActiveCard] = useState<ServiceRequest | null>(null);
     const [selectedCard, setSelectedCard] = useState<ServiceRequest | null>(null);
     const [isCardDetailOpen, setIsCardDetailOpen] = useState(false);
+    const [isRetrying, setIsRetrying] = useState(false);
     const toast = useToast();
 
-    // Initialize Socket.IO connection
-    const { isConnected, error: socketError, emit, on } = useSocketIO('workflow');
+    // Load initial board state
+    const loadBoardState = async () => {
+        try {
+            setIsLoading(true);
+            setError(null);
+            const response = await api.get('/api/admin/workflow/');
+            const data = response.data;
+            setBoardState(transformBoardData(data.columns));
+            setColumnOrder(data.column_order || Object.keys(data.columns));
+            return data;
+        } catch (err) {
+            console.error('Error loading board state:', err);
+            setError('Failed to load workflow board. Please check your connection and try again.');
+            return null;
+        } finally {
+            setIsLoading(false);
+            setIsRetrying(false);
+        }
+    };
 
-    // Subscribe to Socket.IO messages
-    useEffect(() => {
-        const unsubscribeBoardUpdate = on('board_updated', (data: any) => {
-            if (data && typeof data === 'object') {
-                setBoardState(transformBoardData(data));
-            }
-        });
+    // Handle retry
+    const handleRetry = () => {
+        setIsRetrying(true);
+        loadBoardState();
+    };
 
-        const unsubscribeCardMove = on('card_moved', (data: any) => {
-            if (data.success && data.board && typeof data.board === 'object') {
-                setBoardState(transformBoardData(data.board));
-            } else {
+    // Handle WebSocket messages with better error handling
+    const handleMessage = (data: any) => {
+        if (!data) {
+            console.warn('Received null/undefined WebSocket message');
+            return;
+        }
+
+        try {
+            if (data.type === 'card_position_update') {
+                // Update the card's position in the board state
+                setBoardState(prevState => {
+                    const newState = { ...prevState };
+
+                    // Find and remove the card from its current column
+                    Object.keys(newState).forEach(column => {
+                        newState[column] = newState[column].filter(
+                            card => card.id !== data.card_id
+                        );
+                    });
+
+                    // Add the card to its new column if we have it
+                    const card = Object.values(prevState)
+                        .flat()
+                        .find(card => card.id === data.card_id);
+
+                    if (card) {
+                        if (!newState[data.new_status]) {
+                            newState[data.new_status] = [];
+                        }
+                        newState[data.new_status].push({
+                            ...card,
+                            status: data.new_status
+                        });
+                    }
+
+                    return newState;
+                });
+
+                // Show success toast for card movement
                 toast({
-                    title: 'Error moving card',
-                    description: data.message || 'Failed to move card',
-                    status: 'error',
+                    title: 'Card Updated',
+                    description: 'Card position has been updated successfully',
+                    status: 'success',
+                    duration: 3000,
+                    isClosable: true,
+                });
+            } else if (data.type === 'board_update') {
+                // Handle full board update
+                setBoardState(transformBoardData(data.columns));
+                if (data.column_order) {
+                    setColumnOrder(data.column_order);
+                }
+
+                // Show info toast for board update
+                toast({
+                    title: 'Board Updated',
+                    description: 'Workflow board has been updated with latest changes',
+                    status: 'info',
                     duration: 3000,
                     isClosable: true,
                 });
             }
-        });
+        } catch (error) {
+            console.error('Error handling WebSocket message:', error);
+            toast({
+                title: 'Update Error',
+                description: 'Failed to process real-time update. The board may be out of sync.',
+                status: 'error',
+                duration: 5000,
+                isClosable: true,
+            });
+        }
+    };
 
-        return () => {
-            unsubscribeBoardUpdate();
-            unsubscribeCardMove();
-        };
-    }, [on, toast]);
+    // Connect to WebSocket with fallback polling and better error handling
+    const { isConnected, sendMessage, reconnectAttempts, maxReconnectAttempts } = useWebSocket({
+        url: '/ws/admin/workflow/',
+        onMessage: handleMessage,
+        fallbackPollInterval: 60000,
+        fallbackPollFn: loadBoardState,
+        maxReconnectAttempts: 10,
+        initialReconnectDelay: 1000,
+        maxReconnectDelay: 30000
+    });
 
-    // Load initial board state
+    // Show WebSocket connection status with more detailed information
     useEffect(() => {
-        const loadBoardState = async () => {
-            try {
-                const data = await workflowApi.getBoardState();
-                setBoardState(transformBoardData(data.columns));
-                setColumnOrder(data.column_order || Object.keys(data.columns));
-                setError(null);
-            } catch (err) {
-                console.error('Error loading board state:', err);
-                setError('Failed to load workflow board');
-            } finally {
-                setIsLoading(false);
-            }
-        };
+        if (!isConnected) {
+            const message = reconnectAttempts >= maxReconnectAttempts
+                ? 'Real-time updates are currently unavailable. Using periodic updates instead.'
+                : `Attempting to reconnect... (Attempt ${reconnectAttempts}/${maxReconnectAttempts})`;
 
+            toast({
+                title: 'Connection Status',
+                description: message,
+                status: reconnectAttempts >= maxReconnectAttempts ? 'warning' : 'info',
+                duration: 5000,
+                isClosable: true,
+            });
+        } else if (reconnectAttempts > 0) {
+            // Show success message when reconnected
+            toast({
+                title: 'Connected',
+                description: 'Real-time updates restored',
+                status: 'success',
+                duration: 3000,
+                isClosable: true,
+            });
+        }
+    }, [isConnected, reconnectAttempts, maxReconnectAttempts, toast]);
+
+    // Load initial data
+    useEffect(() => {
         loadBoardState();
     }, []);
 
@@ -150,128 +268,81 @@ const WorkflowBoard: React.FC = () => {
             return;
         }
 
-        if (sourceColumn === targetColumn) {
-            // Handle reordering within the same column
-            const oldIndex = boardState[sourceColumn].findIndex(
-                card => card.id.toString() === cardId
-            );
+        if (sourceColumn !== targetColumn) {
+            // Store original state for error handling
+            const originalState = { ...boardState };
 
-            // Get the index of the card we're dropping on
-            const overCardIndex = boardState[sourceColumn].findIndex(
-                card => card.id.toString() === over.id.toString()
-            );
+            try {
+                // Update server first
+                await api.post(`/workflow/${cardId}/move-card/`, {
+                    status: targetColumn
+                });
 
-            // If dropping on a card, use its index, otherwise append to the end
-            const newIndex = overCardIndex !== -1 ? overCardIndex : boardState[sourceColumn].length;
+                // Send WebSocket message
+                sendMessage({
+                    type: 'card_moved',
+                    card_id: cardId,
+                    new_status: targetColumn
+                });
 
-            if (oldIndex !== newIndex) {
-                const newCards = arrayMove(boardState[sourceColumn], oldIndex, newIndex);
-                const newBoardState = {
-                    ...boardState,
-                    [sourceColumn]: newCards,
-                };
+                // Update local state optimistically
+                setBoardState(prevState => {
+                    const newState = { ...prevState };
+                    const card = newState[sourceColumn].find(c => c.id.toString() === cardId);
 
-                // Store original state for error handling
-                const originalState = { ...boardState };
+                    if (card) {
+                        // Remove card from source column
+                        newState[sourceColumn] = newState[sourceColumn].filter(
+                            c => c.id.toString() !== cardId
+                        );
 
-                try {
-                    // Update state optimistically
-                    setBoardState(newBoardState);
-                    // Update server
-                    await workflowApi.moveCard(cardId, targetColumn, newIndex);
-                } catch (error) {
-                    // Revert on error
-                    setBoardState(originalState);
-                    toast({
-                        title: 'Error moving card',
-                        description: 'Failed to update card position',
-                        status: 'error',
-                        duration: 3000,
-                        isClosable: true,
-                    });
-                }
-            }
-        } else {
-            // Handle moving to a different column
-            const newBoardState = { ...boardState };
-            const card = newBoardState[sourceColumn].find(c => c.id.toString() === cardId);
-
-            if (card) {
-                // Store original state for error handling
-                const originalState = { ...boardState };
-
-                try {
-                    // Remove card from source column
-                    newBoardState[sourceColumn] = newBoardState[sourceColumn].filter(
-                        c => c.id.toString() !== cardId
-                    );
-
-                    // Add card to target column
-                    if (!newBoardState[targetColumn]) {
-                        newBoardState[targetColumn] = [];
+                        // Add card to target column
+                        if (!newState[targetColumn]) {
+                            newState[targetColumn] = [];
+                        }
+                        newState[targetColumn].push({
+                            ...card,
+                            status: targetColumn
+                        });
                     }
 
-                    // If dropping on a card, insert at its position, otherwise append
-                    const overCardIndex = boardState[targetColumn]?.findIndex(
-                        card => card.id.toString() === over.id.toString()
-                    );
-
-                    if (overCardIndex !== -1) {
-                        newBoardState[targetColumn].splice(overCardIndex, 0, card);
-                    } else {
-                        newBoardState[targetColumn].push(card);
-                    }
-
-                    // Update state optimistically
-                    setBoardState(newBoardState);
-
-                    // Update server
-                    const position = overCardIndex !== -1 ? overCardIndex : newBoardState[targetColumn].length - 1;
-                    await workflowApi.moveCard(cardId, targetColumn, position);
-                } catch (error) {
-                    // Revert on error
-                    setBoardState(originalState);
-                    toast({
-                        title: 'Error moving card',
-                        description: 'Failed to move card to new column',
-                        status: 'error',
-                        duration: 3000,
-                        isClosable: true,
-                    });
-                }
+                    return newState;
+                });
+            } catch (error) {
+                // Revert on error
+                setBoardState(originalState);
+                toast({
+                    title: 'Error moving card',
+                    description: 'Failed to move card to new column',
+                    status: 'error',
+                    duration: 3000,
+                    isClosable: true,
+                });
             }
         }
     };
 
-    if (isLoading) {
-        return (
-            <Center h="calc(100vh - 100px)">
-                <Spinner size="xl" />
-            </Center>
-        );
+    if (isLoading || isRetrying) {
+        return <LoadingState />;
     }
 
     if (error) {
-        return (
-            <Center h="calc(100vh - 100px)">
-                <Text color="red.500">{error}</Text>
-            </Center>
-        );
+        return <ErrorState message={error} onRetry={handleRetry} />;
     }
 
     return (
-        <>
+        <Box p={4} h="calc(100vh - 100px)" overflowX="auto">
             <DndContext
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
                 collisionDetection={closestCorners}
             >
-                <Flex direction="row" gap={4} p={4} overflowX="auto">
-                    {columnOrder.map((columnId) => (
+                <Flex gap={4}>
+                    {columnOrder.map(columnId => (
                         <WorkflowColumn
                             key={columnId}
                             id={columnId}
-                            title={columnId.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}
+                            title={columnId.replace('_', ' ').toUpperCase()}
                             cards={boardState[columnId] || []}
                             color={COLUMN_COLORS[columnId as keyof typeof COLUMN_COLORS]}
                             onCardClick={(card) => {
@@ -281,29 +352,24 @@ const WorkflowBoard: React.FC = () => {
                         />
                     ))}
                 </Flex>
-
                 <DragOverlay dropAnimation={defaultDropAnimation}>
                     {activeId && activeCard ? (
-                        <Box opacity={0.8}>
-                            <SortableCard
-                                serviceRequest={activeCard}
-                                column=""
-                                onClick={() => { }}
-                            />
-                        </Box>
+                        <SortableCard
+                            id={activeId}
+                            card={activeCard}
+                            isDragging={true}
+                        />
                     ) : null}
                 </DragOverlay>
             </DndContext>
-
             {selectedCard && (
                 <CardDetail
-                    serviceRequest={selectedCard}
                     isOpen={isCardDetailOpen}
                     onClose={() => setIsCardDetailOpen(false)}
-                    socketIO={{ isConnected, error: socketError, emit, on }}
+                    card={selectedCard}
                 />
             )}
-        </>
+        </Box>
     );
 };
 

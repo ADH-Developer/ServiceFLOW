@@ -27,65 +27,34 @@ import {
     Spinner,
 } from '@chakra-ui/react';
 import { FiPlus, FiX, FiMessageSquare, FiTag } from 'react-icons/fi';
-import type { ServiceRequest } from '../../types/service-request';
-import { workflowApi } from '../../lib/api-services';
-import { useSocketIO } from '../../hooks/useSocketIO';
-
-interface Comment {
-    id: number;
-    text: string;
-    created_at?: string;
-    timestamp?: string;
-    user: {
-        first_name: string;
-        last_name: string;
-    } | string;
-}
+import type { ServiceRequest, Comment } from '../../types/service-request';
+import { api } from '../../utils/api';
 
 interface CardDetailProps {
-    serviceRequest: ServiceRequest;
+    card: ServiceRequest;
     isOpen: boolean;
     onClose: () => void;
-    socketIO: ReturnType<typeof useSocketIO>;
 }
 
 const CardDetail: React.FC<CardDetailProps> = ({
-    serviceRequest,
+    card,
     isOpen,
     onClose,
-    socketIO,
 }) => {
     const [newComment, setNewComment] = useState('');
     const [newLabel, setNewLabel] = useState('');
-    const [labels, setLabels] = useState<string[]>(serviceRequest.labels || []);
-    const [comments, setComments] = useState<Comment[]>([]);
+    const [labels, setLabels] = useState<string[]>(card.labels.map(l => l.name));
+    const [comments, setComments] = useState<Comment[]>(card.comments);
     const [isLoading, setIsLoading] = useState(false);
     const borderColor = useColorModeValue('gray.200', 'gray.600');
     const toast = useToast();
-
-    const transformComment = (comment: any): Comment => {
-        return {
-            id: comment.id,
-            text: comment.text,
-            created_at: comment.created_at || comment.timestamp,
-            user: typeof comment.user === 'string'
-                ? {
-                    first_name: comment.user.split(' ')[0] || '',
-                    last_name: comment.user.split(' ')[1] || ''
-                }
-                : comment.user
-        };
-    };
 
     useEffect(() => {
         const fetchComments = async () => {
             setIsLoading(true);
             try {
-                const response = await workflowApi.getComments(serviceRequest.id);
-                if (response && Array.isArray(response)) {
-                    const transformedComments = response.map(transformComment);
-                    setComments(transformedComments);
-                }
+                const response = await api.get(`/workflow/${card.id}/comments/`);
+                setComments(response.data);
             } catch (error) {
                 console.error('Error loading comments:', error);
                 toast({
@@ -102,37 +71,7 @@ const CardDetail: React.FC<CardDetailProps> = ({
         if (isOpen) {
             fetchComments();
         }
-    }, [isOpen, serviceRequest.id, toast]);
-
-    useEffect(() => {
-        if (!socketIO) return;
-
-        const unsubscribeComment = socketIO.on('comment_updated', (data: any) => {
-            if (data.card_id === serviceRequest.id) {
-                if (data.action === 'add') {
-                    const newComment = transformComment(data.comment);
-                    setComments(prev => [...prev, newComment]);
-                } else if (data.action === 'delete') {
-                    setComments(prev => prev.filter(comment => comment.id !== data.comment.id));
-                }
-            }
-        });
-
-        const unsubscribeLabel = socketIO.on('label_updated', (data: any) => {
-            if (data.card_id === serviceRequest.id) {
-                if (data.action === 'add') {
-                    setLabels(prev => [...prev, data.label]);
-                } else if (data.action === 'remove') {
-                    setLabels(prev => prev.filter(label => label !== data.label));
-                }
-            }
-        });
-
-        return () => {
-            unsubscribeComment();
-            unsubscribeLabel();
-        };
-    }, [socketIO, serviceRequest.id]);
+    }, [isOpen, card.id, toast]);
 
     const formatDate = (dateStr: string) => {
         return new Date(dateStr).toLocaleDateString();
@@ -160,17 +99,11 @@ const CardDetail: React.FC<CardDetailProps> = ({
         if (!newComment.trim()) return;
 
         try {
-            const response = await workflowApi.addComment(serviceRequest.id, newComment);
-            const comment = transformComment(response);
-            setComments(prev => [...prev, comment]);
-            setNewComment('');
-
-            // Notify other clients
-            socketIO?.emit('comment_update', {
-                card_id: serviceRequest.id,
-                action: 'add',
-                comment: response
+            const response = await api.post(`/workflow/${card.id}/comments/`, {
+                text: newComment
             });
+            setComments(prev => [...prev, response.data]);
+            setNewComment('');
         } catch (error) {
             console.error('Error adding comment:', error);
             toast({
@@ -184,15 +117,8 @@ const CardDetail: React.FC<CardDetailProps> = ({
 
     const handleDeleteComment = async (commentId: string) => {
         try {
-            await workflowApi.deleteComment(serviceRequest.id, commentId);
+            await api.delete(`/workflow/${card.id}/comments/${commentId}/`);
             setComments(prev => prev.filter(comment => comment.id !== commentId));
-
-            // Notify other clients
-            socketIO?.emit('comment_update', {
-                card_id: serviceRequest.id,
-                action: 'delete',
-                comment: { id: commentId }
-            });
         } catch (error) {
             console.error('Error deleting comment:', error);
             toast({
@@ -208,16 +134,11 @@ const CardDetail: React.FC<CardDetailProps> = ({
         if (!newLabel.trim()) return;
 
         try {
-            await workflowApi.addLabel(serviceRequest.id, newLabel);
-            setLabels(prev => [...prev, newLabel]);
-            setNewLabel('');
-
-            // Notify other clients
-            socketIO?.emit('label_update', {
-                card_id: serviceRequest.id,
-                action: 'add',
+            const response = await api.post(`/workflow/${card.id}/labels/`, {
                 label: newLabel
             });
+            setLabels(prev => [...prev, response.data.name]);
+            setNewLabel('');
         } catch (error) {
             console.error('Error adding label:', error);
             toast({
@@ -231,15 +152,8 @@ const CardDetail: React.FC<CardDetailProps> = ({
 
     const handleRemoveLabel = async (label: string) => {
         try {
-            await workflowApi.removeLabel(serviceRequest.id, label);
+            await api.delete(`/workflow/${card.id}/labels/${label}/`);
             setLabels(prev => prev.filter(l => l !== label));
-
-            // Notify other clients
-            socketIO?.emit('label_update', {
-                card_id: serviceRequest.id,
-                action: 'remove',
-                label
-            });
         } catch (error) {
             console.error('Error removing label:', error);
             toast({
@@ -251,13 +165,6 @@ const CardDetail: React.FC<CardDetailProps> = ({
         }
     };
 
-    const renderCommentUser = (user: Comment['user']) => {
-        if (typeof user === 'string') {
-            return user;
-        }
-        return `${user.first_name} ${user.last_name}`;
-    };
-
     return (
         <Modal isOpen={isOpen} onClose={onClose} size="xl">
             <ModalOverlay />
@@ -265,189 +172,151 @@ const CardDetail: React.FC<CardDetailProps> = ({
                 <ModalHeader>Service Request Details</ModalHeader>
                 <ModalCloseButton />
                 <ModalBody pb={6}>
-                    <Tabs>
-                        <TabList>
-                            <Tab>Details</Tab>
-                            <Tab>History</Tab>
-                            <Tab>
-                                <HStack spacing={1}>
-                                    <FiMessageSquare />
-                                    <Text>Comments</Text>
-                                    <Badge colorScheme="blue" ml={1}>
-                                        {comments.length}
-                                    </Badge>
-                                </HStack>
-                            </Tab>
-                        </TabList>
+                    <VStack spacing={4} align="stretch">
+                        {/* Customer Info */}
+                        <Box p={4} borderWidth="1px" borderRadius="md" borderColor={borderColor}>
+                            <Text fontWeight="bold" mb={2}>Customer Information</Text>
+                            <Text>
+                                {card.customer.first_name} {card.customer.last_name}
+                            </Text>
+                            <Text fontSize="sm" color="gray.500">
+                                {card.customer.email}
+                            </Text>
+                            <Text fontSize="sm" color="gray.500">
+                                {card.customer.phone}
+                            </Text>
+                        </Box>
 
-                        <TabPanels>
-                            {/* Details Tab Panel */}
-                            <TabPanel>
-                                <VStack align="stretch" spacing={4}>
-                                    {/* Customer Information */}
-                                    <Box p={4} borderWidth="1px" borderRadius="md" borderColor={borderColor}>
-                                        <Text fontWeight="bold" mb={2}>Customer Information</Text>
-                                        {serviceRequest.customer && (
+                        {/* Vehicle Info */}
+                        <Box p={4} borderWidth="1px" borderRadius="md" borderColor={borderColor}>
+                            <Text fontWeight="bold" mb={2}>Vehicle Information</Text>
+                            <Text>
+                                {card.vehicle.year} {card.vehicle.make} {card.vehicle.model}
+                            </Text>
+                            <Text fontSize="sm" color="gray.500">
+                                VIN: {card.vehicle.vin}
+                            </Text>
+                        </Box>
+
+                        {/* Services */}
+                        <Box p={4} borderWidth="1px" borderRadius="md" borderColor={borderColor}>
+                            <Text fontWeight="bold" mb={2}>Services</Text>
+                            {card.services.map((service, idx) => (
+                                <HStack key={idx} mb={2}>
+                                    <Badge colorScheme={getUrgencyColor(service.urgency)}>
+                                        {service.urgency}
+                                    </Badge>
+                                    <Text>{service.service_type}</Text>
+                                </HStack>
+                            ))}
+                        </Box>
+
+                        {/* Tabs for Comments and Labels */}
+                        <Tabs>
+                            <TabList>
+                                <Tab><HStack><FiMessageSquare /><Text>Comments</Text></HStack></Tab>
+                                <Tab><HStack><FiTag /><Text>Labels</Text></HStack></Tab>
+                            </TabList>
+
+                            <TabPanels>
+                                {/* Comments Panel */}
+                                <TabPanel>
+                                    <VStack spacing={4} align="stretch">
+                                        {isLoading ? (
+                                            <Box textAlign="center">
+                                                <Spinner />
+                                            </Box>
+                                        ) : (
                                             <>
-                                                <Text>Name: {serviceRequest.customer.first_name} {serviceRequest.customer.last_name}</Text>
+                                                {comments.map((comment) => (
+                                                    <Box
+                                                        key={comment.id}
+                                                        p={3}
+                                                        borderWidth="1px"
+                                                        borderRadius="md"
+                                                        borderColor={borderColor}
+                                                        position="relative"
+                                                    >
+                                                        <IconButton
+                                                            aria-label="Delete comment"
+                                                            icon={<FiX />}
+                                                            size="sm"
+                                                            position="absolute"
+                                                            right={2}
+                                                            top={2}
+                                                            onClick={() => handleDeleteComment(comment.id)}
+                                                        />
+                                                        <Text fontSize="sm" mb={1}>
+                                                            {comment.user.username} - {new Date(comment.created_at).toLocaleString()}
+                                                        </Text>
+                                                        <Text>{comment.text}</Text>
+                                                    </Box>
+                                                ))}
+                                                <FormControl>
+                                                    <FormLabel>Add Comment</FormLabel>
+                                                    <Textarea
+                                                        value={newComment}
+                                                        onChange={(e) => setNewComment(e.target.value)}
+                                                        placeholder="Type your comment..."
+                                                    />
+                                                    <Button
+                                                        mt={2}
+                                                        leftIcon={<FiPlus />}
+                                                        onClick={handleAddComment}
+                                                        isDisabled={!newComment.trim()}
+                                                    >
+                                                        Add Comment
+                                                    </Button>
+                                                </FormControl>
                                             </>
                                         )}
-                                    </Box>
+                                    </VStack>
+                                </TabPanel>
 
-                                    {/* Vehicle Information */}
-                                    <Box p={4} borderWidth="1px" borderRadius="md" borderColor={borderColor}>
-                                        <Text fontWeight="bold" mb={2}>Vehicle Information</Text>
-                                        <Text>
-                                            {serviceRequest.vehicle.year} {serviceRequest.vehicle.make} {serviceRequest.vehicle.model}
-                                        </Text>
-                                    </Box>
-
-                                    {/* Labels */}
-                                    <Box p={4} borderWidth="1px" borderRadius="md" borderColor={borderColor}>
-                                        <HStack justify="space-between" mb={2}>
-                                            <Text fontWeight="bold">Labels</Text>
-                                            <HStack>
-                                                <Input
-                                                    placeholder="Add new label"
-                                                    value={newLabel}
-                                                    onChange={(e) => setNewLabel(e.target.value)}
-                                                    size="sm"
-                                                />
-                                                <IconButton
-                                                    aria-label="Add label"
-                                                    icon={<FiPlus />}
-                                                    onClick={handleAddLabel}
-                                                    size="sm"
-                                                />
-                                            </HStack>
-                                        </HStack>
-                                        <HStack spacing={2} flexWrap="wrap">
-                                            {labels.map((label, index) => (
+                                {/* Labels Panel */}
+                                <TabPanel>
+                                    <VStack spacing={4} align="stretch">
+                                        <Box>
+                                            {labels.map((label) => (
                                                 <Badge
-                                                    key={index}
-                                                    colorScheme="purple"
-                                                    display="flex"
-                                                    alignItems="center"
+                                                    key={label}
+                                                    m={1}
+                                                    p={2}
+                                                    borderRadius="full"
+                                                    variant="subtle"
                                                 >
-                                                    <FiTag />
-                                                    <Text ml={1}>{label}</Text>
+                                                    {label}
                                                     <IconButton
                                                         aria-label="Remove label"
                                                         icon={<FiX />}
                                                         size="xs"
                                                         ml={1}
-                                                        variant="ghost"
                                                         onClick={() => handleRemoveLabel(label)}
                                                     />
                                                 </Badge>
                                             ))}
-                                        </HStack>
-                                    </Box>
-                                </VStack>
-                            </TabPanel>
-
-                            {/* History Tab Panel */}
-                            <TabPanel>
-                                <VStack align="stretch" spacing={4}>
-                                    {serviceRequest.workflow_history.map((entry, index) => (
-                                        <Box
-                                            key={index}
-                                            p={4}
-                                            borderWidth="1px"
-                                            borderRadius="md"
-                                            borderColor={borderColor}
-                                        >
-                                            <Text fontSize="sm" color="gray.500">
-                                                {new Date(entry.timestamp).toLocaleString()}
-                                            </Text>
-                                            <Text>
-                                                Moved from{' '}
-                                                <Badge>
-                                                    {entry.from_column.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}
-                                                </Badge>{' '}
-                                                to{' '}
-                                                <Badge>
-                                                    {entry.to_column.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}
-                                                </Badge>
-                                            </Text>
-                                            {entry.user && (
-                                                <Text fontSize="sm">by {entry.user}</Text>
-                                            )}
                                         </Box>
-                                    ))}
-                                </VStack>
-                            </TabPanel>
-
-                            {/* Comments Tab Panel */}
-                            <TabPanel>
-                                <VStack align="stretch" spacing={4}>
-                                    {/* New Comment Form */}
-                                    <Box p={4} borderWidth="1px" borderRadius="md" borderColor={borderColor}>
                                         <FormControl>
-                                            <FormLabel>Add Comment</FormLabel>
-                                            <Textarea
-                                                value={newComment}
-                                                onChange={(e) => setNewComment(e.target.value)}
-                                                placeholder="Type your comment here..."
-                                                size="sm"
-                                                mb={2}
+                                            <FormLabel>Add Label</FormLabel>
+                                            <Input
+                                                value={newLabel}
+                                                onChange={(e) => setNewLabel(e.target.value)}
+                                                placeholder="Enter label name..."
                                             />
                                             <Button
-                                                colorScheme="blue"
-                                                size="sm"
-                                                onClick={handleAddComment}
-                                                leftIcon={<FiMessageSquare />}
+                                                mt={2}
+                                                leftIcon={<FiPlus />}
+                                                onClick={handleAddLabel}
+                                                isDisabled={!newLabel.trim()}
                                             >
-                                                Add Comment
+                                                Add Label
                                             </Button>
                                         </FormControl>
-                                    </Box>
-
-                                    {/* Comments List */}
-                                    {isLoading ? (
-                                        <Box textAlign="center" py={4}>
-                                            <Spinner />
-                                        </Box>
-                                    ) : (
-                                        <VStack align="stretch" spacing={2}>
-                                            {comments.length === 0 ? (
-                                                <Text color="gray.500" textAlign="center">No comments yet</Text>
-                                            ) : (
-                                                comments.map((comment) => (
-                                                    <Box
-                                                        key={comment.id}
-                                                        p={4}
-                                                        borderWidth="1px"
-                                                        borderRadius="md"
-                                                        borderColor={borderColor}
-                                                    >
-                                                        <HStack justify="space-between" mb={2}>
-                                                            <Text fontWeight="bold">
-                                                                {renderCommentUser(comment.user)}
-                                                            </Text>
-                                                            <HStack spacing={2}>
-                                                                <Text fontSize="sm" color="gray.500">
-                                                                    {new Date(comment.created_at || comment.timestamp || '').toLocaleString()}
-                                                                </Text>
-                                                                <IconButton
-                                                                    aria-label="Delete comment"
-                                                                    icon={<FiX />}
-                                                                    size="xs"
-                                                                    variant="ghost"
-                                                                    onClick={() => handleDeleteComment(comment.id)}
-                                                                />
-                                                            </HStack>
-                                                        </HStack>
-                                                        <Text>{comment.text}</Text>
-                                                    </Box>
-                                                ))
-                                            )}
-                                        </VStack>
-                                    )}
-                                </VStack>
-                            </TabPanel>
-                        </TabPanels>
-                    </Tabs>
+                                    </VStack>
+                                </TabPanel>
+                            </TabPanels>
+                        </Tabs>
+                    </VStack>
                 </ModalBody>
             </ModalContent>
         </Modal>

@@ -104,17 +104,7 @@ export const customersApi = {
             console.log('Attempting login with:', credentials.email);
             const response = await apiClient.post('/api/customers/login/', credentials);
             console.log('Login response:', response.data);
-
-            if (response.data?.data?.token) {
-                localStorage.setItem('accessToken', response.data.data.token.access);
-                localStorage.setItem('refreshToken', response.data.data.token.refresh);
-                localStorage.setItem('userData', JSON.stringify(response.data.data.user));
-
-                // Return the full response so we can check user type in the login page
-                return response.data;
-            } else {
-                throw new Error('Invalid response from server');
-            }
+            return response;
         } catch (error: any) {
             console.error('Login error:', error.response?.data || error);
             throw error;

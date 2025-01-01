@@ -1,5 +1,8 @@
+import json
 import logging
 
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.contrib.auth.models import Group, User
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
@@ -7,7 +10,6 @@ from django.db import models
 from django.utils import timezone
 
 from .cache import AppointmentCache
-from .socket_io import socket_manager
 
 logger = logging.getLogger(__name__)
 
@@ -160,22 +162,31 @@ class ServiceRequest(models.Model):
             except Exception as e:
                 logger.error(f"Error updating cache: {e}")
 
-            # Send Socket.IO notifications
+            # Send WebSocket notifications
             try:
-                logger.info("Sending Socket.IO notifications...")
+                logger.info("Sending WebSocket notifications...")
+                channel_layer = get_channel_layer()
 
                 # Send pending count update
-                await socket_manager.emit_to_namespace(
-                    "appointments", "pending_count_updated", {"count": pending_count}
+                await channel_layer.group_send(
+                    "appointments",
+                    {
+                        "type": "appointments.pending_count_updated",
+                        "data": {"count": pending_count},
+                    },
                 )
 
                 # Send today's appointments update
-                await socket_manager.emit_to_namespace(
-                    "appointments", "today_appointments_updated", appointments_data
+                await channel_layer.group_send(
+                    "appointments",
+                    {
+                        "type": "appointments.today_appointments_updated",
+                        "data": appointments_data,
+                    },
                 )
                 logger.info("Sent today's appointments update")
             except Exception as e:
-                logger.error(f"Error sending Socket.IO notification: {e}")
+                logger.error(f"Error sending WebSocket notification: {e}")
 
             return pending_count
         except Exception as e:
@@ -192,9 +203,9 @@ class ServiceRequest(models.Model):
                 "This is to maintain the integrity of the workflow history."
             )
 
-    def save(self, *args, **kwargs):
+    def save(self, *args, skip_ws_update=False, **kwargs):
         # Check if this is a new instance
-        is_new = self.pk is None
+        is_new = self._state.adding
 
         # If new instance, check auto-confirm setting
         if is_new:
@@ -202,6 +213,7 @@ class ServiceRequest(models.Model):
             if settings.auto_confirm_appointments:
                 self.status = "confirmed"
                 self.workflow_column = "estimates"
+
         # Check if workflow column is changing
         if self.pk:
             try:
@@ -239,6 +251,33 @@ class ServiceRequest(models.Model):
 
         # Save the instance
         super().save(*args, **kwargs)
+
+        # Send WebSocket update if it's a today's appointment and update hasn't been skipped
+        try:
+            if (
+                not skip_ws_update
+                and self.appointment_date == timezone.localtime().date()
+            ):
+                from asgiref.sync import async_to_sync
+                from channels.layers import get_channel_layer
+
+                from .serializers import ServiceRequestSerializer
+
+                channel_layer = get_channel_layer()
+                serializer = ServiceRequestSerializer(self)
+                appointment_data = serializer.data
+
+                # Send update to appointments group
+                async_to_sync(channel_layer.group_send)(
+                    "appointments",
+                    {
+                        "type": "appointment_update",
+                        "action": "create" if is_new else "update",
+                        "appointment": appointment_data,
+                    },
+                )
+        except Exception as e:
+            logger.error(f"Error sending WebSocket update: {e}")
 
     def delete(self, *args, **kwargs):
         # Delete the instance
@@ -376,8 +415,9 @@ class SystemSettings(models.Model):
     async def notify_auto_confirm(self, pending_count):
         """Send notifications about auto-confirmed appointments"""
         try:
-            await socket_manager.emit_to_namespace(
-                "appointments", "pending_count_updated", {"count": 0}
+            await channel_layer.group_send(
+                "appointments",
+                {"type": "appointments.pending_count_updated", "data": {"count": 0}},
             )
             logger.info(
                 f"Sent notification for {pending_count} auto-confirmed appointments"

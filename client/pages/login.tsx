@@ -30,15 +30,21 @@ const LoginPage = () => {
         setIsLoading(true);
 
         try {
+            console.log('Attempting login with:', email);
             const response = await customersApi.login({ email, password });
+            console.log('Login response:', response);
 
-            // Check if user is staff and redirect accordingly
-            if (response.data.user.is_staff) {
+            // Store auth data - note the nested data structure
+            localStorage.setItem('accessToken', response.data.data.token.access);
+            localStorage.setItem('userData', JSON.stringify(response.data.data.user));
+
+            if (response.data.data.user.is_staff) {
                 router.push('/admin/dashboard');
             } else {
                 router.push('/dashboard');
             }
         } catch (error: any) {
+            console.error('Login error details:', error);
             setError(error.response?.data?.message || 'Login failed');
             setIsLoading(false);
         }

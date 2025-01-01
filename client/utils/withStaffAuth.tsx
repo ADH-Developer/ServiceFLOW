@@ -7,15 +7,22 @@ export const withStaffAuth = (WrappedComponent: React.ComponentType) => {
 
         useEffect(() => {
             const checkStaffAuth = () => {
+                const token = localStorage.getItem('accessToken');
                 const userData = localStorage.getItem('userData');
-                if (!userData) {
+
+                if (!token || !userData) {
                     router.push('/login');
                     return;
                 }
 
-                const user = JSON.parse(userData);
-                if (!user.is_staff) {
-                    router.push('/dashboard');
+                try {
+                    const user = JSON.parse(userData);
+                    if (!user.is_staff) {
+                        router.push('/dashboard');
+                    }
+                } catch (error) {
+                    console.error('Error checking staff auth:', error);
+                    router.push('/login');
                 }
             };
 

@@ -6,24 +6,23 @@ import { DragHandleIcon } from '@chakra-ui/icons';
 import type { ServiceRequest } from '../../types/service-request';
 
 interface SortableCardProps {
-    serviceRequest: ServiceRequest;
-    column: string;
-    onClick: () => void;
+    id: string;
+    card: ServiceRequest;
+    isDragging?: boolean;
 }
 
-const SortableCard: React.FC<SortableCardProps> = ({ serviceRequest, column, onClick }) => {
+const SortableCard: React.FC<SortableCardProps> = ({ id, card, isDragging }) => {
     const {
         attributes,
         listeners,
         setNodeRef,
         transform,
         transition,
-        isDragging,
     } = useSortable({
-        id: serviceRequest.id.toString(),
+        id,
         data: {
-            serviceRequest,
-            column,
+            card,
+            column: card.status,
         },
     });
 
@@ -57,7 +56,6 @@ const SortableCard: React.FC<SortableCardProps> = ({ serviceRequest, column, onC
             opacity={isDragging ? 0.5 : 1}
             _hover={{ boxShadow: 'lg' }}
             mb={2}
-            onClick={onClick}
             position="relative"
         >
             {/* Drag Handle */}
@@ -76,19 +74,19 @@ const SortableCard: React.FC<SortableCardProps> = ({ serviceRequest, column, onC
 
             <VStack align="stretch" spacing={2}>
                 <Text fontWeight="bold">
-                    {serviceRequest.customer?.user?.first_name} {serviceRequest.customer?.user?.last_name}
+                    {card.customer.first_name} {card.customer.last_name}
                 </Text>
                 <Text fontSize="sm" color="gray.600">
-                    {serviceRequest.vehicle?.year} {serviceRequest.vehicle?.make} {serviceRequest.vehicle?.model}
+                    {card.vehicle.year} {card.vehicle.make} {card.vehicle.model}
                 </Text>
                 <Text fontSize="sm" color="gray.500">
-                    {new Date(serviceRequest.appointment_date).toLocaleDateString()} {serviceRequest.appointment_time}
+                    {new Date(card.appointment_date).toLocaleDateString()} {card.appointment_time}
                 </Text>
                 {/* Urgency Badge */}
-                {serviceRequest.services?.[0]?.urgency && (
+                {card.services?.[0]?.urgency && (
                     <Box textAlign="right">
-                        <Badge colorScheme={getUrgencyColor(serviceRequest.services[0].urgency)}>
-                            {serviceRequest.services[0].urgency}
+                        <Badge colorScheme={getUrgencyColor(card.services[0].urgency)}>
+                            {card.services[0].urgency}
                         </Badge>
                     </Box>
                 )}

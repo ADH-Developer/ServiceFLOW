@@ -3,13 +3,9 @@ import random
 from datetime import date, time, timedelta
 
 from asgiref.sync import sync_to_async
+from channels.layers import get_channel_layer
 from customers.models import CustomerProfile, ServiceItem, ServiceRequest, Vehicle
 from customers.serializers import ServiceRequestSerializer
-from customers.socket_io import (
-    get_pending_count,
-    get_today_appointments,
-    socket_manager,
-)
 from django.contrib.auth.models import User
 from django.core.management.base import BaseCommand
 
@@ -33,36 +29,28 @@ class Command(BaseCommand):
             help="Date for the appointment",
         )
 
-    async def emit_socket_events(self, appointment):
-        """Emit socket events for the new appointment"""
+    async def send_appointment_update(self, appointment):
+        """Send WebSocket update for the new appointment"""
         try:
-            # Emit appointment_created event
+            channel_layer = get_channel_layer()
             serializer = ServiceRequestSerializer(appointment)
             appointment_data = await sync_to_async(lambda: serializer.data)()
-            await socket_manager.emit_to_namespace(
+
+            # Send update to appointments group
+            await channel_layer.group_send(
                 "appointments",
-                "appointment_created",
-                appointment_data,
+                {
+                    "type": "appointment_update",
+                    "action": "create",
+                    "appointment": appointment_data,
+                },
+            )
+            self.stdout.write(
+                self.style.SUCCESS("Sent WebSocket update for new appointment")
             )
 
-            # Update pending count
-            pending_count = await get_pending_count()
-            await socket_manager.emit_to_namespace(
-                "appointments",
-                "pending_count_updated",
-                {"count": pending_count},
-            )
-
-            # Update today's appointments if the appointment is for today
-            if appointment.appointment_date == date.today():
-                today_appointments = await get_today_appointments()
-                await socket_manager.emit_to_namespace(
-                    "appointments",
-                    "today_appointments_updated",
-                    today_appointments,
-                )
         except Exception as e:
-            self.stdout.write(self.style.ERROR(f"Error emitting socket events: {e}"))
+            self.stdout.write(self.style.ERROR(f"Error sending WebSocket update: {e}"))
 
     def handle(self, *args, **options):
         try:
@@ -106,14 +94,17 @@ class Command(BaseCommand):
                 minute = random.choice([0, 15, 30, 45])
             appointment_time = time(hour, minute)
 
-            # Create service request
-            appointment = ServiceRequest.objects.create(
+            # Create appointment without sending WebSocket update
+            appointment = ServiceRequest(
                 customer=customer,
                 vehicle=vehicle,
                 status=options["status"],
                 appointment_date=appointment_date,
                 appointment_time=appointment_time,
+                workflow_column="estimates",
+                workflow_position=0,
             )
+            appointment.save(skip_ws_update=True)  # Save with skip_ws_update flag
 
             # Create service item
             service_types = [
@@ -133,16 +124,12 @@ class Command(BaseCommand):
 
             self.stdout.write(
                 self.style.SUCCESS(
-                    f'Successfully created {options["status"]} appointment for '
-                    f'{appointment_date} at {appointment_time.strftime("%I:%M %p")}'
+                    f"Created appointment for {appointment.appointment_time}"
                 )
             )
 
-            # Emit socket events
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(self.emit_socket_events(appointment))
-            loop.close()
+            # Send a single WebSocket update
+            asyncio.run(self.send_appointment_update(appointment))
 
         except Exception as e:
             self.stdout.write(

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/router';
 import {
     Box,
@@ -8,15 +8,14 @@ import {
     Center,
     Alert,
     AlertIcon,
-    SpinnerProps,
 } from '@chakra-ui/react';
 import AdminDashboardLayout from '../../../components/Dashboard/AdminDashboardLayout';
 import { StatCard } from '../../../components/Dashboard/StatCard';
 import { AppointmentsList } from '../../../components/Dashboard/AppointmentsList';
-import { appointmentsApi } from '../../../lib/api-services';
 import { useTab } from '../../../contexts/TabContext';
 import { withStaffAuth } from '../../../utils/withStaffAuth';
 import { Appointment } from '../../../types/appointment';
+import { useWebSocket } from '../../../hooks/useWebSocket';
 
 const LoadingSpinner = () => (
     <Center h="100vh">
@@ -25,36 +24,16 @@ const LoadingSpinner = () => (
 );
 
 interface ServiceAdvisorContentProps {
-    pendingCount: number;
     todayAppointments: Appointment[];
 }
 
-const ServiceAdvisorContent = ({ pendingCount, todayAppointments }: ServiceAdvisorContentProps) => {
-    console.log('[ServiceAdvisorContent] Rendering with:', {
-        pendingCount,
-        todayAppointmentsCount: todayAppointments.length,
-        todayAppointmentIds: todayAppointments.map(a => a.id)
-    });
-
-    useEffect(() => {
-        console.log('[ServiceAdvisorContent] State updated:', {
-            pendingCount,
-            todayAppointmentsCount: todayAppointments.length,
-            todayAppointmentIds: todayAppointments.map(a => a.id)
-        });
-    }, [pendingCount, todayAppointments]);
-
+const ServiceAdvisorContent = ({ todayAppointments }: ServiceAdvisorContentProps) => {
     return (
         <Box>
             <Text fontSize="2xl" fontWeight="bold" mb={6}>
                 Service Advisor Dashboard
             </Text>
             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={6} mb={8}>
-                <StatCard
-                    title="Pending Appointments"
-                    stat={pendingCount}
-                    helpText="Awaiting confirmation"
-                />
                 <StatCard
                     title="Today's Appointments"
                     stat={todayAppointments.length}
@@ -73,7 +52,7 @@ const ServiceAdvisorContent = ({ pendingCount, todayAppointments }: ServiceAdvis
             </Box>
         </Box>
     );
-};
+}
 
 const TechnicianContent = () => (
     <Box>
@@ -90,55 +69,108 @@ const TechnicianContent = () => (
 const AdminDashboard = () => {
     const router = useRouter();
     const [isLoading, setIsLoading] = useState(true);
-    const [pendingCount, setPendingCount] = useState<number>(0);
     const [todayAppointments, setTodayAppointments] = useState<Appointment[]>([]);
     const { activeTab } = useTab();
     const [error, setError] = useState<string | null>(null);
+    const lastUpdateRef = useRef<number>(0);
 
-    const handlePendingCountUpdate = useCallback((count: number) => {
-        console.log('[Dashboard] handlePendingCountUpdate called with count:', count);
-        console.log('[Dashboard] Previous pending count:', pendingCount);
-        setPendingCount(count);
-        console.log('[Dashboard] Set new pending count:', count);
-    }, [pendingCount]);
-
-    const handleTodayAppointmentsUpdate = useCallback((appointments: Appointment[]) => {
-        console.log('[Dashboard] handleTodayAppointmentsUpdate called with appointments:', appointments.map(a => a.id));
-        console.log('[Dashboard] Previous today appointments:', todayAppointments.map(a => a.id));
-        setTodayAppointments(appointments);
-        console.log('[Dashboard] Set new today appointments:', appointments.map(a => a.id));
-    }, [todayAppointments]);
-
-    const fetchDashboardData = useCallback(async () => {
-        try {
-            console.log('[Dashboard] Fetching dashboard data...');
-            const [pendingData, todayData] = await Promise.all([
-                appointmentsApi.getPendingCount(),
-                appointmentsApi.getTodayAppointments()
-            ]);
-
-            console.log('[Dashboard] Dashboard data loaded:', { pendingData, todayData });
-            handlePendingCountUpdate(pendingData.count);
-            handleTodayAppointmentsUpdate(todayData);
-            setError(null);
-        } catch (error) {
-            console.error('[Dashboard] Error fetching dashboard data:', error);
-            setError('Failed to fetch dashboard data');
+    const handleMessage = useCallback((data: any) => {
+        if (!data) {
+            console.log('Received empty WebSocket message');
+            return;
         }
-    }, [handlePendingCountUpdate, handleTodayAppointmentsUpdate]);
+
+        try {
+            console.log('Received WebSocket message:', {
+                type: data.type,
+                action: data.action,
+                data: data
+            });
+
+            const now = Date.now();
+
+            // Handle appointments list updates (full refresh)
+            if (data.type === 'appointments_list' && Array.isArray(data.appointments)) {
+                console.log('Received appointments list update:', {
+                    appointmentsCount: data.appointments.length,
+                    appointments: data.appointments
+                });
+
+                // Only update if this is our first load or if it's been more than 2 seconds since last update
+                if (isLoading || (now - lastUpdateRef.current > 2000)) {
+                    setTodayAppointments(data.appointments);
+                    setIsLoading(false);
+                    lastUpdateRef.current = now;
+                }
+                return;
+            }
+
+            // Handle individual appointment updates
+            if (data.type === 'appointment_update' && data.appointment) {
+                console.log('Received appointment update:', {
+                    action: data.action,
+                    appointmentId: data.appointment?.id,
+                    appointment: data.appointment
+                });
+
+                // Only process updates if it's been more than 1 second since last update
+                if (now - lastUpdateRef.current > 1000) {
+                    setTodayAppointments(prev => {
+                        const sortByTime = (appointments: Appointment[]): Appointment[] =>
+                            appointments.sort((a, b) =>
+                                new Date(a.appointment_time).getTime() - new Date(b.appointment_time).getTime()
+                            );
+
+                        switch (data.action) {
+                            case 'create':
+                                // Check if appointment already exists
+                                if (prev.some(a => a.id === data.appointment.id)) {
+                                    return prev;
+                                }
+                                return sortByTime([...prev, data.appointment]);
+
+                            case 'update':
+                                return sortByTime([
+                                    ...prev.filter(a => a.id !== data.appointment.id),
+                                    data.appointment
+                                ]);
+
+                            case 'delete':
+                                if (!data.appointment_id) return prev;
+                                return prev.filter(a => a.id !== data.appointment_id);
+
+                            default:
+                                return prev;
+                        }
+                    });
+                    lastUpdateRef.current = now;
+                }
+            }
+        } catch (error) {
+            console.error('Error handling WebSocket message:', error);
+            if (error instanceof Error) {
+                console.error('Error details:', {
+                    message: error.message,
+                    stack: error.stack
+                });
+            }
+            setError('Error updating appointments');
+        }
+    }, [isLoading]);
+
+    // Use WebSocket hook with a 5-minute fallback polling interval
+    const { isConnected } = useWebSocket({
+        url: '/ws/customers/appointments/',
+        onMessage: handleMessage,
+        fallbackPollInterval: 300000, // 5 minutes
+    });
 
     useEffect(() => {
-        console.log('[Dashboard] Current state:', { pendingCount, todayAppointments });
-    }, [pendingCount, todayAppointments]);
-
-    useEffect(() => {
-        const checkAuthAndFetchData = async () => {
-            console.log('[Dashboard] Checking auth and fetching data...');
+        const checkAuth = () => {
             const token = localStorage.getItem('accessToken');
             const userData = localStorage.getItem('userData');
 
             if (!token || !userData) {
-                console.log('[Dashboard] No token or user data found, redirecting to login');
                 router.push('/login');
                 return;
             }
@@ -146,29 +178,20 @@ const AdminDashboard = () => {
             try {
                 const user = JSON.parse(userData);
                 if (!user.is_staff) {
-                    console.log('[Dashboard] User is not staff, redirecting to dashboard');
                     router.push('/dashboard');
                     return;
                 }
-
-                console.log('[Dashboard] User is authenticated, fetching data');
-                await fetchDashboardData();
-                setIsLoading(false);
             } catch (error) {
-                console.error('[Dashboard] Error during auth check:', error);
+                console.error('Error during auth check:', error);
                 router.push('/login');
             }
         };
 
-        checkAuthAndFetchData();
-    }, [router, fetchDashboardData]);
+        checkAuth();
+    }, [router]);
 
     if (isLoading) {
-        return (
-            <Box h="100vh" display="flex" alignItems="center" justifyContent="center">
-                <Text>Loading...</Text>
-            </Box>
-        );
+        return <LoadingSpinner />;
     }
 
     if (error) {
@@ -186,7 +209,6 @@ const AdminDashboard = () => {
         <AdminDashboardLayout>
             {activeTab === 'service-advisor' ? (
                 <ServiceAdvisorContent
-                    pendingCount={pendingCount}
                     todayAppointments={todayAppointments}
                 />
             ) : (
@@ -194,6 +216,6 @@ const AdminDashboard = () => {
             )}
         </AdminDashboardLayout>
     );
-};
+}
 
 export default withStaffAuth(AdminDashboard); 

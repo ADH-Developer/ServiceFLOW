@@ -1,100 +1,83 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { WS_BASE_URL } from '../lib/api-client';
 
-type WebSocketMessage = {
-    type: string;
-    payload: any;
-};
+interface WebSocketHookOptions {
+    url: string;
+    onMessage: (data: any) => void;
+    fallbackPollInterval?: number;
+}
 
-export const useWebSocket = (path: string) => {
+export const useWebSocket = ({
+    url,
+    onMessage,
+    fallbackPollInterval = 300000,
+}: WebSocketHookOptions) => {
     const [isConnected, setIsConnected] = useState(false);
-    const [error, setError] = useState<Error | null>(null);
-    const wsRef = useRef<WebSocket | null>(null);
-    const mountedRef = useRef(true);
+    const ws = useRef<WebSocket | null>(null);
+    const reconnectTimeout = useRef<NodeJS.Timeout>();
 
     const connect = useCallback(() => {
-        if (!mountedRef.current) return;
-
         try {
-            const cleanPath = path.replace(/^\/?(ws\/)?/, '').replace(/\/$/, '');
-            const wsPath = `ws/${cleanPath}`;
-            const cleanBaseUrl = WS_BASE_URL.replace(/\/$/, '');
-            const wsUrl = `${cleanBaseUrl}/${wsPath}/`;
+            // Get the authentication token from localStorage
+            const token = localStorage.getItem('accessToken');
+            if (!token) {
+                console.error('No authentication token found');
+                return;
+            }
+
+            // In development, use port 8000 for WebSocket connections
+            const wsUrl = process.env.NODE_ENV === 'development'
+                ? `ws://localhost:8000${url}`
+                : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${url}`;
 
             console.log('Connecting to WebSocket:', wsUrl);
-            const ws = new WebSocket(wsUrl);
-            wsRef.current = ws;
+            // Include the token in the connection URL
+            const fullUrl = `${wsUrl}?token=${encodeURIComponent(token)}`;
+            console.log('Full WebSocket URL:', fullUrl);
+            ws.current = new WebSocket(fullUrl);
 
-            ws.onopen = () => {
-                if (!mountedRef.current) return;
+            ws.current.onopen = () => {
                 console.log('WebSocket connected successfully');
                 setIsConnected(true);
-                setError(null);
             };
 
-            ws.onclose = () => {
-                if (!mountedRef.current) return;
-                console.log('WebSocket disconnected, attempting reconnect...');
+            ws.current.onclose = () => {
+                console.log('WebSocket disconnected');
                 setIsConnected(false);
-                if (mountedRef.current) {
-                    setTimeout(connect, 3000);
-                }
+                ws.current = null;
+
+                // Simple reconnect after 5 seconds
+                reconnectTimeout.current = setTimeout(connect, 5000);
             };
 
-            ws.onerror = (event) => {
-                if (!mountedRef.current) return;
-                console.error('WebSocket error:', event);
-                setError(new Error('WebSocket error occurred'));
-                setIsConnected(false);
+            ws.current.onerror = (error) => {
+                console.error('WebSocket error:', error);
             };
 
-        } catch (err) {
-            if (!mountedRef.current) return;
-            console.error('WebSocket connection error:', err);
-            setError(err instanceof Error ? err : new Error('Failed to connect to WebSocket'));
-            setIsConnected(false);
-        }
-    }, [path]);
-
-    const sendMessage = useCallback((message: WebSocketMessage) => {
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify(message));
-        } else {
-            console.warn('WebSocket is not connected, message not sent');
-        }
-    }, []);
-
-    const subscribe = useCallback((callback: (data: any) => void) => {
-        if (wsRef.current) {
-            wsRef.current.onmessage = (event) => {
-                if (!mountedRef.current) return;
+            ws.current.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    callback(data);
+                    onMessage(data);
                 } catch (error) {
-                    console.error('Error parsing WebSocket message:', error);
+                    console.error('Error processing WebSocket message:', error);
                 }
             };
+        } catch (error) {
+            console.error('Error connecting to WebSocket:', error);
         }
-    }, []);
+    }, [url, onMessage]);
 
     useEffect(() => {
-        mountedRef.current = true;
         connect();
 
         return () => {
-            mountedRef.current = false;
-            if (wsRef.current) {
-                wsRef.current.close();
-                wsRef.current = null;
+            if (ws.current) {
+                ws.current.close();
+            }
+            if (reconnectTimeout.current) {
+                clearTimeout(reconnectTimeout.current);
             }
         };
     }, [connect]);
 
-    return {
-        isConnected,
-        error,
-        sendMessage,
-        subscribe
-    };
-}; 
+    return { isConnected };
+};
