@@ -460,9 +460,12 @@ class WorkflowViewSet(viewsets.ViewSet):
             # Get full service request data for each ID
             columns = {}
             for column, request_ids in board_state.items():
-                requests = ServiceRequest.objects.filter(id__in=request_ids)
-                serializer = ServiceRequestSerializer(requests, many=True)
-                columns[column] = serializer.data
+                if request_ids:  # Only query if there are IDs
+                    requests = ServiceRequest.objects.filter(id__in=request_ids)
+                    serializer = ServiceRequestSerializer(requests, many=True)
+                    columns[column] = serializer.data
+                else:
+                    columns[column] = []  # Empty column
 
             return Response(
                 {
@@ -474,6 +477,7 @@ class WorkflowViewSet(viewsets.ViewSet):
             )
 
         except Exception as e:
+            logger.error(f"Error getting workflow board state: {e}")
             return Response(
                 {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

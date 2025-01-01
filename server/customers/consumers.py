@@ -138,41 +138,128 @@ class AppointmentConsumer(AsyncWebsocketConsumer):
 
 class WorkflowConsumer(AsyncWebsocketConsumer):
     async def connect(self):
+        # Get token from query string
+        query_string = self.scope.get("query_string", b"").decode()
+        query_params = parse_qs(query_string)
+        token = query_params.get("token", [None])[0]
+
+        if not token:
+            logger.warning("No token provided for WebSocket connection")
+            await self.close()
+            return
+
+        try:
+            # Verify the token and get the user
+            access_token = AccessToken(token)
+            user_id = access_token.payload.get("user_id")
+            if not user_id:
+                logger.warning("No user_id in token payload")
+                await self.close()
+                return
+
+            user = await self.get_user(user_id)
+            if not user or not user.is_staff:  # Only staff can access workflow
+                logger.warning(f"User {user_id} not found or not staff")
+                await self.close()
+                return
+
+            self.scope["user"] = user
+            logger.info(f"User {user} authenticated via token")
+
+        except TokenError as e:
+            logger.warning(f"Invalid token provided: {e}")
+            await self.close()
+            return
+        except Exception as e:
+            logger.error(f"Error authenticating WebSocket connection: {e}")
+            await self.close()
+            return
+
         # Join the workflow group
         await self.channel_layer.group_add("workflow", self.channel_name)
         await self.accept()
 
+        # Send initial workflow state
+        await self.send_workflow_state()
+
+    @database_sync_to_async
+    def get_user(self, user_id):
+        try:
+            return User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return None
+
     async def disconnect(self, close_code):
+        logger.info(
+            f"User {self.scope.get('user')} disconnected from workflow websocket"
+        )
         # Leave the workflow group
         await self.channel_layer.group_discard("workflow", self.channel_name)
 
+    @database_sync_to_async
+    def get_workflow_state(self):
+        try:
+            from .cache import WorkflowCache
+
+            board_state = WorkflowCache.get_board_state()
+            return {
+                "columns": board_state,
+                "column_order": [c[0] for c in ServiceRequest.WORKFLOW_COLUMN_CHOICES],
+            }
+        except Exception as e:
+            logger.error(f"Error getting workflow state: {e}")
+            return None
+
+    async def send_workflow_state(self):
+        try:
+            workflow_state = await self.get_workflow_state()
+            if workflow_state:
+                message = {"type": "workflow_update", "data": workflow_state}
+                await self.send(text_data=json.dumps(message))
+                logger.info(f"Successfully sent workflow state to {self.channel_name}")
+        except Exception as e:
+            logger.error(f"Error sending workflow state: {e}")
+
     async def receive(self, text_data):
-        # Handle card movement updates from the client
+        if not self.scope.get("user") or not self.scope["user"].is_staff:
+            logger.warning("Unauthorized user attempted to send workflow update")
+            return
+
         try:
             data = json.loads(text_data)
-            if data["type"] == "card_moved":
+            if data.get("type") == "card_moved":
                 await self.update_card_position(data)
                 # Broadcast the update to all connected clients
                 await self.channel_layer.group_send(
                     "workflow",
                     {
-                        "type": "card_position_update",
-                        "card_id": data["card_id"],
-                        "new_status": data["new_status"],
+                        "type": "workflow_update",
+                        "data": await self.get_workflow_state(),
                     },
                 )
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding WebSocket message: {e}")
+        except Exception as e:
+            logger.error(f"Error processing WebSocket message: {e}")
 
     @database_sync_to_async
     def update_card_position(self, data):
         try:
             service_request = ServiceRequest.objects.get(id=data["card_id"])
-            service_request.status = data["new_status"]
+            service_request.workflow_column = data["new_status"]
             service_request.save()
+            return True
         except ServiceRequest.DoesNotExist:
-            pass
+            logger.error(f"Service request {data.get('card_id')} not found")
+            return False
+        except Exception as e:
+            logger.error(f"Error updating card position: {e}")
+            return False
 
-    async def card_position_update(self, event):
-        # Forward the card position update to the client
-        await self.send(text_data=json.dumps(event))
+    async def workflow_update(self, event):
+        """Forward workflow updates to the client"""
+        try:
+            await self.send(text_data=json.dumps(event))
+            logger.info(f"Successfully sent workflow update to {self.channel_name}")
+        except Exception as e:
+            logger.error(f"Error sending workflow update: {e}")

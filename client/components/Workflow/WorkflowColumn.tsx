@@ -31,6 +31,10 @@ const WorkflowColumn: React.FC<WorkflowColumnProps> = ({
 
     const { setNodeRef, isOver } = useDroppable({
         id: id,
+        data: {
+            type: 'column',
+            accepts: ['card']
+        }
     });
 
     return (
@@ -68,15 +72,16 @@ const WorkflowColumn: React.FC<WorkflowColumnProps> = ({
                 p={2}
             >
                 <SortableContext
-                    items={cards.map(card => card.id.toString())}
+                    items={cards.filter(card => card && card.id).map(card => card.id.toString())}
                     strategy={verticalListSortingStrategy}
                 >
-                    {cards.map((serviceRequest) => (
+                    {cards.filter(card => card && card.id).map((card) => (
                         <SortableCard
-                            key={serviceRequest.id}
-                            serviceRequest={serviceRequest}
+                            key={card.id}
+                            id={card.id.toString()}
+                            card={card}
                             column={id}
-                            onClick={() => onCardClick(serviceRequest)}
+                            onClick={() => onCardClick(card)}
                         />
                     ))}
                 </SortableContext>

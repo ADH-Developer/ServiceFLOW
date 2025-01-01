@@ -8,10 +8,12 @@ import type { ServiceRequest } from '../../types/service-request';
 interface SortableCardProps {
     id: string;
     card: ServiceRequest;
+    column: string;
     isDragging?: boolean;
+    onClick?: () => void;
 }
 
-const SortableCard: React.FC<SortableCardProps> = ({ id, card, isDragging }) => {
+const SortableCard: React.FC<SortableCardProps> = ({ id, card, column, isDragging, onClick }) => {
     const {
         attributes,
         listeners,
@@ -21,10 +23,15 @@ const SortableCard: React.FC<SortableCardProps> = ({ id, card, isDragging }) => 
     } = useSortable({
         id,
         data: {
+            type: 'card',
             card,
-            column: card.status,
+            column,
         },
     });
+
+    if (!card) {
+        return null;
+    }
 
     const style = {
         transform: CSS.Transform.toString(transform),
@@ -57,6 +64,7 @@ const SortableCard: React.FC<SortableCardProps> = ({ id, card, isDragging }) => 
             _hover={{ boxShadow: 'lg' }}
             mb={2}
             position="relative"
+            onClick={onClick}
         >
             {/* Drag Handle */}
             <Box
