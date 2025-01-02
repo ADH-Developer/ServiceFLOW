@@ -126,6 +126,7 @@ class WorkflowCache:
         try:
             # Import here to avoid circular import
             from .models import ServiceRequest
+            from .serializers import ServiceRequestSerializer
 
             # Get all service requests grouped by column
             columns = {}
@@ -134,13 +135,11 @@ class WorkflowCache:
                     ServiceRequest.objects.filter(workflow_column=column)
                     .select_related("customer__user", "vehicle")
                     .prefetch_related("services")
-                    .order_by("workflow_position")
+                    .order_by("workflow_position", "created_at")
                 )
-                # Store both id and position to maintain order
-                columns[column] = [
-                    {"id": req.id, "position": req.workflow_position}
-                    for req in requests
-                ]
+                # Serialize the requests to include all necessary data
+                serializer = ServiceRequestSerializer(requests, many=True)
+                columns[column] = serializer.data
 
             # Cache the result
             cache.set(cls.BOARD_KEY, columns, timeout=3600)  # 1 hour timeout
@@ -148,39 +147,16 @@ class WorkflowCache:
 
         except Exception as e:
             logger.error(f"Error rebuilding board state: {e}")
+            logger.exception(e)  # Log the full traceback
             return {}
 
     @classmethod
     def move_card(cls, request_id: int, to_column: str, position: int) -> bool:
         """Move a card to a new position/column"""
         try:
-            # Get current board state
-            board_state = cls.get_board_state()
-
-            # Find and remove card from current column
-            card_data = None
-            for column, cards in board_state.items():
-                for i, card in enumerate(cards):
-                    if card["id"] == request_id:
-                        card_data = cards.pop(i)
-                        break
-                if card_data:
-                    break
-
-            # Add card to new column at position
-            if to_column not in board_state:
-                board_state[to_column] = []
-
-            target_column = board_state[to_column]
-            new_card_data = {"id": request_id, "position": position}
-
-            if position >= len(target_column):
-                target_column.append(new_card_data)
-            else:
-                target_column.insert(position, new_card_data)
-
-            # Update cache
-            cache.set(cls.BOARD_KEY, board_state, timeout=3600)
+            # Instead of trying to update the cache directly,
+            # just invalidate it and let it rebuild on next access
+            cache.delete(cls.BOARD_KEY)
             return True
 
         except Exception as e:

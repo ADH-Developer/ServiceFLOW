@@ -13,6 +13,7 @@ import { useWebSocket } from '../../hooks/useWebSocket';
 import WorkflowColumn from './WorkflowColumn';
 import type { ServiceRequest } from '../../types/service-request';
 import { api } from '../../utils/api';
+import { workflowApi } from '../../lib/api-services';
 import CardDetail from './CardDetail';
 import SortableCard from './SortableCard';
 
@@ -31,16 +32,30 @@ const COLUMN_COLORS = {
 
 const transformBoardData = (data: any): BoardState => {
     const transformed: BoardState = {};
+    if (!data || typeof data !== 'object') {
+        console.warn('Invalid data received:', data);
+        return transformed;
+    }
+
     Object.entries(data).forEach(([key, value]) => {
         // Filter out any invalid cards
-        const validCards = (value as any[]).filter(card =>
+        const validCards = Array.isArray(value) ? (value as any[]).filter(card =>
             card &&
             card.id &&
             typeof card.id !== 'undefined' &&
-            card.customer &&  // Ensure we have the full card data
+            card.customer?.user &&  // Check for nested user data
             card.vehicle
-        );
-        transformed[key] = validCards;
+        ) : [];
+
+        transformed[key] = validCards.map(card => ({
+            ...card,
+            customer: {
+                ...card.customer,
+                first_name: card.customer.user.first_name,
+                last_name: card.customer.user.last_name,
+                email: card.customer.user.email
+            }
+        }));
     });
     return transformed;
 };
@@ -89,13 +104,14 @@ const WorkflowBoard: React.FC = () => {
         try {
             setIsLoading(true);
             setError(null);
-            const response = await api.get('/customers/admin/workflow/');
-            const data = response.data;
-            console.log('Received board data:', data);
-            const transformedData = transformBoardData(data.columns);
-            console.log('Transformed board data:', transformedData);
-            setBoardState(transformedData);
+
+            // Fetch initial state from API
+            const data = await workflowApi.getBoardState();
+            console.log('Initial board state:', data);
+
+            setBoardState(transformBoardData(data.columns));
             setColumnOrder(data.column_order || Object.keys(data.columns));
+            setIsLoading(false);
         } catch (err) {
             console.error('Error loading board state:', err);
             setError('Failed to load workflow board. Please check your connection and try again.');
@@ -120,10 +136,14 @@ const WorkflowBoard: React.FC = () => {
 
             const now = Date.now();
             if (now - lastUpdateRef.current > 1000) {
-                if (data.type === 'workflow_update' && data.data) {
+                if (data.type === 'workflow_update' && data.data?.columns) {
                     console.log('Received workflow update:', data.data);
                     setBoardState(transformBoardData(data.data.columns));
                     setColumnOrder(data.data.column_order || Object.keys(data.data.columns));
+                    lastUpdateRef.current = now;
+                } else if (data.type === 'card_moved' && data.success) {
+                    // Trigger a refresh of the board state
+                    loadBoardState();
                     lastUpdateRef.current = now;
                 }
             }
@@ -137,7 +157,6 @@ const WorkflowBoard: React.FC = () => {
     const { isConnected } = useWebSocket({
         url: '/ws/admin/workflow/',
         onMessage: handleMessage,
-        fallbackPollInterval: 300000, // 5 minutes
     });
 
     // Initial load
@@ -187,47 +206,121 @@ const WorkflowBoard: React.FC = () => {
 
             if (oldColumn !== newColumn) {
                 try {
+                    // Find the card being moved
+                    const card = boardState[oldColumn]?.find(c => c.id.toString() === activeId);
+                    if (!card) {
+                        console.error('Card not found:', activeId);
+                        return;
+                    }
+
+                    // Calculate new position based on where the card was dropped
+                    const targetColumn = boardState[newColumn] || [];
+                    let newPosition = targetColumn.length; // Default to end of column
+
+                    // If dropped over another card, insert at that position
+                    if (over.data.current?.type === 'card') {
+                        const overCardIndex = targetColumn.findIndex(c => c.id.toString() === overId);
+                        if (overCardIndex !== -1) {
+                            newPosition = overCardIndex;
+                        }
+                    }
+
                     // Update local state optimistically
                     setBoardState(prev => {
                         const newState = { ...prev };
+
+                        // Find and remove card from old column
                         const cardIndex = newState[oldColumn].findIndex(c => c.id.toString() === activeId);
+                        if (cardIndex === -1) return prev;
 
-                        if (cardIndex !== -1) {
-                            const [card] = newState[oldColumn].splice(cardIndex, 1);
-                            if (!newState[newColumn]) newState[newColumn] = [];
-                            const newPosition = newState[newColumn].length;
+                        const [movedCard] = newState[oldColumn].splice(cardIndex, 1);
 
-                            // Preserve all card data while updating position and status
-                            newState[newColumn].push({
-                                ...card,
-                                workflow_position: newPosition,
-                                workflow_column: newColumn as WorkflowStatus
-                            });
+                        // Update positions in old column
+                        newState[oldColumn] = newState[oldColumn].map((card, index) => ({
+                            ...card,
+                            workflow_position: index
+                        }));
+
+                        // Initialize new column if needed
+                        if (!newState[newColumn]) {
+                            newState[newColumn] = [];
                         }
+
+                        // Add card to new column at the calculated position
+                        newState[newColumn].splice(newPosition, 0, {
+                            ...movedCard,
+                            workflow_position: newPosition,
+                            workflow_column: newColumn as WorkflowStatus
+                        });
+
+                        // Update positions in new column
+                        newState[newColumn] = newState[newColumn].map((card, index) => ({
+                            ...card,
+                            workflow_position: index
+                        }));
 
                         return newState;
                     });
 
-                    // Send update via WebSocket
-                    const message = {
-                        type: 'card_moved',
-                        card_id: activeId,
-                        new_status: newColumn,
-                        position: boardState[newColumn]?.length || 0
-                    };
+                    // Send update via API
+                    await workflowApi.moveCard(activeId, newColumn, newPosition);
 
-                    console.log('Sending WebSocket message:', message);
-                    ws.current?.send(JSON.stringify(message));
-
-                } catch (error) {
+                } catch (error: any) {
                     console.error('Error moving card:', error);
+                    const errorMessage = error.response?.data?.error || 'Failed to move card. Please try again.';
                     toast({
                         title: 'Error',
-                        description: 'Failed to move card. Please try again.',
+                        description: errorMessage,
                         status: 'error',
                         duration: 3000,
                         isClosable: true,
                     });
+
+                    // Revert the optimistic update by reloading the board state
+                    loadBoardState();
+                }
+            }
+        }
+        // Handle reordering within the same column
+        else if (active.data.current?.type === 'card' && over.data.current?.type === 'card') {
+            const column = active.data.current.column;
+            const oldIndex = boardState[column].findIndex(c => c.id.toString() === activeId);
+            const newIndex = boardState[column].findIndex(c => c.id.toString() === overId);
+
+            if (oldIndex !== -1 && newIndex !== -1) {
+                try {
+                    // Update local state optimistically
+                    setBoardState(prev => {
+                        const newState = { ...prev };
+                        const newColumnState = [...newState[column]];
+                        const [movedCard] = newColumnState.splice(oldIndex, 1);
+                        newColumnState.splice(newIndex, 0, movedCard);
+
+                        // Update positions
+                        newState[column] = newColumnState.map((card, index) => ({
+                            ...card,
+                            workflow_position: index
+                        }));
+
+                        return newState;
+                    });
+
+                    // Send update via API
+                    await workflowApi.moveCard(activeId, column, newIndex);
+
+                } catch (error: any) {
+                    console.error('Error reordering card:', error);
+                    const errorMessage = error.response?.data?.error || 'Failed to reorder card. Please try again.';
+                    toast({
+                        title: 'Error',
+                        description: errorMessage,
+                        status: 'error',
+                        duration: 3000,
+                        isClosable: true,
+                    });
+
+                    // Revert the optimistic update by reloading the board state
+                    loadBoardState();
                 }
             }
         }

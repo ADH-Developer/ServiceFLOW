@@ -168,21 +168,40 @@ class WorkflowConsumer(AsyncWebsocketConsumer):
             self.scope["user"] = user
             logger.info(f"User {user} authenticated via token")
 
+            # Accept the connection first
+            await self.accept()
+            logger.info(f"Accepted WebSocket connection for {user}")
+
+            # Then join the workflow group
+            await self.channel_layer.group_add("workflow", self.channel_name)
+            logger.info(f"Added {user} to workflow group")
+
+            # Get initial workflow state
+            workflow_state = await self.get_workflow_state()
+            if workflow_state:
+                try:
+                    # Send initial state
+                    await self.send(
+                        text_data=json.dumps(
+                            {"type": "workflow_update", "data": workflow_state}
+                        )
+                    )
+                    logger.info(f"Sent initial workflow state to {self.channel_name}")
+                except Exception as e:
+                    logger.error(f"Error sending initial workflow state: {e}")
+                    logger.exception(e)
+            else:
+                logger.error("Failed to get initial workflow state")
+
         except TokenError as e:
             logger.warning(f"Invalid token provided: {e}")
             await self.close()
             return
         except Exception as e:
-            logger.error(f"Error authenticating WebSocket connection: {e}")
+            logger.error(f"Error in connect: {e}")
+            logger.exception(e)
             await self.close()
             return
-
-        # Join the workflow group
-        await self.channel_layer.group_add("workflow", self.channel_name)
-        await self.accept()
-
-        # Send initial workflow state
-        await self.send_workflow_state()
 
     @database_sync_to_async
     def get_user(self, user_id):
@@ -204,12 +223,17 @@ class WorkflowConsumer(AsyncWebsocketConsumer):
             from .cache import WorkflowCache
 
             board_state = WorkflowCache.get_board_state()
+            if not board_state:
+                logger.warning("No board state found in cache")
+                return None
+
             return {
                 "columns": board_state,
                 "column_order": [c[0] for c in ServiceRequest.WORKFLOW_COLUMN_CHOICES],
             }
         except Exception as e:
             logger.error(f"Error getting workflow state: {e}")
+            logger.exception(e)
             return None
 
     async def send_workflow_state(self):
@@ -261,26 +285,27 @@ class WorkflowConsumer(AsyncWebsocketConsumer):
                 new_column = data["new_status"]
 
                 if old_column != new_column:
-                    # First, update positions in the old column
-                    ServiceRequest.objects.filter(
-                        workflow_column=old_column,
-                        workflow_position__gt=service_request.workflow_position,
-                    ).update(workflow_position=F("workflow_position") - 1)
+                    # Get the target position
+                    target_position = data.get("position", 0)
 
-                    # Get the highest position in the new column
-                    max_position = (
-                        ServiceRequest.objects.filter(
-                            workflow_column=new_column
-                        ).aggregate(models.Max("workflow_position"))[
-                            "workflow_position__max"
-                        ]
-                        or -1
-                    )
-
-                    # Update the moved card
+                    # Move the card to the new column
                     service_request.workflow_column = new_column
-                    service_request.workflow_position = max_position + 1
+                    service_request.workflow_position = target_position
                     service_request.save()
+
+                    # Reset positions in both columns to ensure they're sequential
+                    # This is a heavy operation but ensures consistency
+                    for column in [old_column, new_column]:
+                        cards = (
+                            ServiceRequest.objects.filter(workflow_column=column)
+                            .exclude(id=service_request.id)
+                            .order_by("workflow_position")
+                        )
+
+                        for index, card in enumerate(cards):
+                            if card.workflow_position != index:
+                                card.workflow_position = index
+                                card.save(update_fields=["workflow_position"])
 
                     # Update cache
                     from .cache import WorkflowCache
@@ -294,12 +319,45 @@ class WorkflowConsumer(AsyncWebsocketConsumer):
                     logger.info(
                         f"Card {service_request.id} moved to {new_column} at position {service_request.workflow_position}"
                     )
+
+                    # Send success response
+                    async_to_sync(self.send)(
+                        json.dumps(
+                            {
+                                "type": "card_moved",
+                                "success": True,
+                                "card_id": service_request.id,
+                                "new_column": new_column,
+                                "position": service_request.workflow_position,
+                            }
+                        )
+                    )
+
+                    # Broadcast update to all clients
+                    async_to_sync(self.channel_layer.group_send)(
+                        "workflow",
+                        {
+                            "type": "workflow_update",
+                            "data": async_to_sync(self.get_workflow_state)(),
+                        },
+                    )
+
                     return True
 
             return False
 
         except Exception as e:
             logger.error(f"Error moving card {data['card_id']}: {e}")
+            # Send error response
+            async_to_sync(self.send)(
+                json.dumps(
+                    {
+                        "type": "card_moved",
+                        "success": False,
+                        "error": str(e),
+                    }
+                )
+            )
             return False
 
     async def workflow_update(self, event):

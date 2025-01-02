@@ -6,6 +6,7 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.contrib.auth import authenticate
 from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
@@ -454,33 +455,22 @@ class WorkflowViewSet(viewsets.ViewSet):
     def list(self, request):
         """Get the current board state"""
         try:
-            # Get board state from cache/DB
-            board_state = WorkflowCache.get_board_state()
+            # Get all service requests with their positions
+            service_requests = (
+                ServiceRequest.objects.all()
+                .select_related("customer__user", "vehicle")
+                .prefetch_related("services", "comments", "labels")
+            )
 
-            # Get full service request data for each ID
+            # Group them by workflow column
             columns = {}
-            for column, cards in board_state.items():
-                if cards:  # Only query if there are cards
-                    # Extract IDs from the card objects
-                    request_ids = [card["id"] for card in cards]
-                    requests = ServiceRequest.objects.filter(id__in=request_ids)
+            for column, _ in ServiceRequest.WORKFLOW_COLUMN_CHOICES:
+                column_requests = service_requests.filter(
+                    workflow_column=column
+                ).order_by("workflow_position")
 
-                    # Create a mapping of id to position
-                    position_map = {card["id"]: card["position"] for card in cards}
-
-                    # Serialize and add position information
-                    serialized_requests = ServiceRequestSerializer(
-                        requests, many=True
-                    ).data
-                    for req in serialized_requests:
-                        req["workflow_position"] = position_map.get(req["id"], 0)
-
-                    # Sort by position
-                    columns[column] = sorted(
-                        serialized_requests, key=lambda x: x["workflow_position"]
-                    )
-                else:
-                    columns[column] = []  # Empty column
+                serializer = ServiceRequestSerializer(column_requests, many=True)
+                columns[column] = serializer.data
 
             return Response(
                 {
@@ -501,31 +491,92 @@ class WorkflowViewSet(viewsets.ViewSet):
     def move_card(self, request, pk=None):
         try:
             service_request = ServiceRequest.objects.get(pk=pk)
-            new_status = request.data.get("status")
+            new_column = request.data.get("to_column")
+            position = request.data.get("position", 0)
 
-            if new_status not in dict(ServiceRequest.STATUS_CHOICES):
+            if new_column not in dict(ServiceRequest.WORKFLOW_COLUMN_CHOICES):
                 return Response(
-                    {"error": "Invalid status"}, status=status.HTTP_400_BAD_REQUEST
+                    {"error": "Invalid workflow column"},
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            service_request.status = new_status
-            service_request.save()
+            with transaction.atomic():
+                # Get the current cards in the target column
+                cards_in_target = ServiceRequest.objects.filter(
+                    workflow_column=new_column
+                ).order_by("workflow_position")
 
-            # Send real-time update for workflow
-            channel_layer = get_channel_layer()
-            async_to_sync(channel_layer.group_send)(
-                "workflow",
-                {
-                    "type": "card_position_update",
-                    "card_id": service_request.id,
-                    "new_status": new_status,
-                },
-            )
+                # If moving within the same column
+                if service_request.workflow_column == new_column:
+                    # Remove the card from its current position
+                    cards_in_target = cards_in_target.exclude(pk=service_request.pk)
+
+                # Make space for the new card by incrementing positions
+                ServiceRequest.objects.filter(
+                    workflow_column=new_column, workflow_position__gte=position
+                ).update(workflow_position=F("workflow_position") + 1)
+
+                # Move the card to the new column and position
+                service_request.workflow_column = new_column
+                service_request.workflow_position = position
+                service_request.save()
+
+                # Reorder all cards in both columns to ensure sequential positions
+                old_column = service_request.workflow_column
+                for column in set([old_column, new_column]):
+                    cards = ServiceRequest.objects.filter(
+                        workflow_column=column
+                    ).order_by("workflow_position")
+
+                    for i, card in enumerate(cards):
+                        if card.workflow_position != i:
+                            card.workflow_position = i
+                            card.save(update_fields=["workflow_position"])
+
+                # Get updated board state
+                board_state = WorkflowCache.get_board_state()
+                if not board_state:
+                    # Fallback to database if cache fails
+                    service_requests = (
+                        ServiceRequest.objects.all()
+                        .select_related("customer__user", "vehicle")
+                        .prefetch_related("services", "comments", "labels")
+                    )
+                    columns = {}
+                    for column, _ in ServiceRequest.WORKFLOW_COLUMN_CHOICES:
+                        column_requests = service_requests.filter(
+                            workflow_column=column
+                        ).order_by("workflow_position")
+                        serializer = ServiceRequestSerializer(
+                            column_requests, many=True
+                        )
+                        columns[column] = serializer.data
+                    board_state = {
+                        "columns": columns,
+                        "column_order": [
+                            c[0] for c in ServiceRequest.WORKFLOW_COLUMN_CHOICES
+                        ],
+                    }
+
+                # Send real-time update for workflow
+                channel_layer = get_channel_layer()
+                async_to_sync(channel_layer.group_send)(
+                    "workflow",
+                    {
+                        "type": "workflow_update",
+                        "data": board_state,
+                    },
+                )
 
             return Response(ServiceRequestSerializer(service_request).data)
         except ServiceRequest.DoesNotExist:
             return Response(
                 {"error": "Service request not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error moving card: {e}")
+            return Response(
+                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
     @action(detail=True, methods=["post"])

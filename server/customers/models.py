@@ -203,7 +203,35 @@ class ServiceRequest(models.Model):
                 "This is to maintain the integrity of the workflow history."
             )
 
+    @classmethod
+    def reset_workflow_positions(cls):
+        """Reset and reorder all card positions within their columns"""
+        from django.db import transaction
+
+        with transaction.atomic():
+            for column, _ in cls.WORKFLOW_COLUMN_CHOICES:
+                cards = cls.objects.filter(workflow_column=column).order_by(
+                    "created_at"
+                )
+                for index, card in enumerate(cards):
+                    if card.workflow_position != index:
+                        card.workflow_position = index
+                        card.save(update_fields=["workflow_position"])
+
     def save(self, *args, skip_ws_update=False, **kwargs):
+        # Check if this is a new instance
+        is_new = self._state.adding
+
+        # If new instance, set position to end of column
+        if is_new:
+            max_position = ServiceRequest.objects.filter(
+                workflow_column=self.workflow_column
+            ).aggregate(models.Max("workflow_position"))["workflow_position__max"]
+
+            self.workflow_position = (
+                (max_position + 1) if max_position is not None else 0
+            )
+
         # Check if this is a new instance
         is_new = self._state.adding
 

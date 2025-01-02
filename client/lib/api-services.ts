@@ -120,12 +120,12 @@ export const customersApi = {
 
 export const workflowApi = {
     getBoardState: async () => {
-        const response = await apiClient.get('/api/customers/workflow/');
+        const response = await apiClient.get('/api/customers/admin/workflow/');
         return response.data;
     },
 
     moveCard: async (cardId: string | number, toColumn: string, position: number) => {
-        const response = await apiClient.post(`/api/customers/workflow/${cardId}/move_card/`, {
+        const response = await apiClient.post(`/api/customers/admin/workflow/${cardId}/move_card/`, {
             to_column: toColumn,
             position: position,
         });
@@ -133,12 +133,12 @@ export const workflowApi = {
     },
 
     getComments: async (cardId: string | number) => {
-        const response = await apiClient.get(`/api/customers/workflow/${cardId}/comments/`);
+        const response = await apiClient.get(`/api/customers/admin/workflow/${cardId}/comments/`);
         return response.data;
     },
 
     addComment: async (cardId: string | number, text: string) => {
-        const response = await apiClient.post(`/api/customers/workflow/${cardId}/comments/`, {
+        const response = await apiClient.post(`/api/customers/admin/workflow/${cardId}/comments/`, {
             text,
         });
         return response.data;
@@ -146,13 +146,13 @@ export const workflowApi = {
 
     deleteComment: async (cardId: string | number, commentId: number) => {
         const response = await apiClient.delete(
-            `/api/customers/workflow/${cardId}/comments/${commentId}/`
+            `/api/customers/admin/workflow/${cardId}/comments/${commentId}/`
         );
         return response.data;
     },
 
     addLabel: async (cardId: string | number, label: string) => {
-        const response = await apiClient.post(`/api/customers/workflow/${cardId}/labels/`, {
+        const response = await apiClient.post(`/api/customers/admin/workflow/${cardId}/labels/`, {
             label,
         });
         return response.data;
@@ -160,7 +160,7 @@ export const workflowApi = {
 
     removeLabel: async (cardId: string | number, label: string) => {
         const response = await apiClient.delete(
-            `/api/customers/workflow/${cardId}/labels/${label}/`
+            `/api/customers/admin/workflow/${cardId}/labels/${label}/`
         );
         return response.data;
     }
