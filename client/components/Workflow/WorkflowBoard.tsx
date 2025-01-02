@@ -5,8 +5,10 @@ import {
     DragEndEvent,
     DragOverlay,
     DragStartEvent,
-    closestCorners,
-    defaultDropAnimation,
+    DragOverEvent,
+    closestCenter,
+    pointerWithin,
+    getFirstCollision,
 } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { useWebSocket } from '../../hooks/useWebSocket';
@@ -98,6 +100,7 @@ const WorkflowBoard: React.FC = () => {
     const lastUpdateRef = useRef<number>(0);
     const toast = useToast();
     const ws = useRef<WebSocket | null>(null);
+    const [activeColumn, setActiveColumn] = useState<string | null>(null);
 
     // Load initial board state
     const loadBoardState = async () => {
@@ -191,138 +194,95 @@ const WorkflowBoard: React.FC = () => {
         }
     };
 
+    const handleDragOver = (event: DragOverEvent) => {
+        const { active, over } = event;
+        if (!over) return;
+
+        const activeId = active.id.toString();
+        const overId = over.id.toString();
+
+        // Find the containers
+        const activeContainer = active.data.current?.column;
+        const overContainer = over.data.current?.type === 'column'
+            ? overId
+            : over.data.current?.column;
+
+        if (!activeContainer || !overContainer) return;
+
+        if (activeContainer !== overContainer) {
+            // Moving to a new container
+            setBoardState(prev => {
+                const activeItems = prev[activeContainer];
+                const overItems = prev[overContainer] || [];
+                const activeIndex = activeItems.findIndex(item => item.id.toString() === activeId);
+                const overIndex = over.data.current?.type === 'card'
+                    ? overItems.findIndex(item => item.id.toString() === overId)
+                    : overItems.length;
+
+                const newState = { ...prev };
+                const [movedItem] = newState[activeContainer].splice(activeIndex, 1);
+
+                // Insert at the correct position
+                newState[overContainer] = [
+                    ...overItems.slice(0, overIndex),
+                    { ...movedItem, workflow_column: overContainer as WorkflowStatus },
+                    ...overItems.slice(overIndex)
+                ];
+
+                return newState;
+            });
+        } else if (over.data.current?.type === 'card' && activeId !== overId) {
+            // Moving within the same container
+            setBoardState(prev => {
+                const items = prev[activeContainer];
+                const activeIndex = items.findIndex(item => item.id.toString() === activeId);
+                const overIndex = items.findIndex(item => item.id.toString() === overId);
+
+                const newState = { ...prev };
+                newState[activeContainer] = arrayMove(items, activeIndex, overIndex);
+                return newState;
+            });
+        }
+    };
+
     const handleDragEnd = async (event: DragEndEvent) => {
         const { active, over } = event;
+        setActiveColumn(null);
 
         if (!over) return;
 
         const activeId = active.id.toString();
         const overId = over.id.toString();
 
-        // Handle dropping a card into a new column
-        if (active.data.current?.type === 'card' && over.data.current?.type === 'column') {
-            const oldColumn = active.data.current.column;
-            const newColumn = over.id.toString();
+        // Find the containers
+        const activeContainer = active.data.current?.column;
+        const overContainer = over.data.current?.type === 'column'
+            ? overId
+            : over.data.current?.column;
 
-            if (oldColumn !== newColumn) {
-                try {
-                    // Find the card being moved
-                    const card = boardState[oldColumn]?.find(c => c.id.toString() === activeId);
-                    if (!card) {
-                        console.error('Card not found:', activeId);
-                        return;
-                    }
+        if (!activeContainer || !overContainer) return;
 
-                    // Calculate new position based on where the card was dropped
-                    const targetColumn = boardState[newColumn] || [];
-                    let newPosition = targetColumn.length; // Default to end of column
+        try {
+            const items = boardState[overContainer];
+            const position = over.data.current?.type === 'card'
+                ? items.findIndex(item => item.id.toString() === overId)
+                : items.length;
 
-                    // If dropped over another card, insert at that position
-                    if (over.data.current?.type === 'card') {
-                        const overCardIndex = targetColumn.findIndex(c => c.id.toString() === overId);
-                        if (overCardIndex !== -1) {
-                            newPosition = overCardIndex;
-                        }
-                    }
+            // Send update via API
+            await workflowApi.moveCard(activeId, overContainer, position);
+        } catch (error: any) {
+            console.error('Error moving card:', error);
+            const errorMessage = error.response?.data?.error || 'Failed to move card. Please try again.';
+            toast({
+                title: 'Error',
+                description: errorMessage,
+                status: 'error',
+                duration: 3000,
+                isClosable: true,
+            });
 
-                    // Update local state optimistically
-                    setBoardState(prev => {
-                        const newState = { ...prev };
-
-                        // Find and remove card from old column
-                        const cardIndex = newState[oldColumn].findIndex(c => c.id.toString() === activeId);
-                        if (cardIndex === -1) return prev;
-
-                        const [movedCard] = newState[oldColumn].splice(cardIndex, 1);
-
-                        // Update positions in old column
-                        newState[oldColumn] = newState[oldColumn].map((card, index) => ({
-                            ...card,
-                            workflow_position: index
-                        }));
-
-                        // Initialize new column if needed
-                        if (!newState[newColumn]) {
-                            newState[newColumn] = [];
-                        }
-
-                        // Add card to new column at the calculated position
-                        newState[newColumn].splice(newPosition, 0, {
-                            ...movedCard,
-                            workflow_position: newPosition,
-                            workflow_column: newColumn as WorkflowStatus
-                        });
-
-                        // Update positions in new column
-                        newState[newColumn] = newState[newColumn].map((card, index) => ({
-                            ...card,
-                            workflow_position: index
-                        }));
-
-                        return newState;
-                    });
-
-                    // Send update via API
-                    await workflowApi.moveCard(activeId, newColumn, newPosition);
-
-                } catch (error: any) {
-                    console.error('Error moving card:', error);
-                    const errorMessage = error.response?.data?.error || 'Failed to move card. Please try again.';
-                    toast({
-                        title: 'Error',
-                        description: errorMessage,
-                        status: 'error',
-                        duration: 3000,
-                        isClosable: true,
-                    });
-
-                    // Revert the optimistic update by reloading the board state
-                    loadBoardState();
-                }
-            }
-        }
-        // Handle reordering within the same column
-        else if (active.data.current?.type === 'card' && over.data.current?.type === 'card') {
-            const column = active.data.current.column;
-            const oldIndex = boardState[column].findIndex(c => c.id.toString() === activeId);
-            const newIndex = boardState[column].findIndex(c => c.id.toString() === overId);
-
-            if (oldIndex !== -1 && newIndex !== -1) {
-                try {
-                    // Update local state optimistically
-                    setBoardState(prev => {
-                        const newState = { ...prev };
-                        const newColumnState = [...newState[column]];
-                        const [movedCard] = newColumnState.splice(oldIndex, 1);
-                        newColumnState.splice(newIndex, 0, movedCard);
-
-                        // Update positions
-                        newState[column] = newColumnState.map((card, index) => ({
-                            ...card,
-                            workflow_position: index
-                        }));
-
-                        return newState;
-                    });
-
-                    // Send update via API
-                    await workflowApi.moveCard(activeId, column, newIndex);
-
-                } catch (error: any) {
-                    console.error('Error reordering card:', error);
-                    const errorMessage = error.response?.data?.error || 'Failed to reorder card. Please try again.';
-                    toast({
-                        title: 'Error',
-                        description: errorMessage,
-                        status: 'error',
-                        duration: 3000,
-                        isClosable: true,
-                    });
-
-                    // Revert the optimistic update by reloading the board state
-                    loadBoardState();
-                }
-            }
+            // Revert the optimistic update by reloading the board state
+            loadBoardState();
         }
     };
 
@@ -338,11 +298,9 @@ const WorkflowBoard: React.FC = () => {
         <Box p={4} h="calc(100vh - 100px)" overflowX="auto">
             <DndContext
                 onDragStart={handleDragStart}
+                onDragOver={handleDragOver}
                 onDragEnd={handleDragEnd}
-                collisionDetection={closestCorners}
-                onDragOver={(event) => {
-                    console.log('DragOver event:', event);
-                }}
+                collisionDetection={closestCenter}
             >
                 <Flex gap={4}>
                     {columnOrder.map(columnId => (
@@ -359,10 +317,11 @@ const WorkflowBoard: React.FC = () => {
                                 setSelectedCard(card);
                                 setIsCardDetailOpen(true);
                             }}
+                            activeId={activeId}
                         />
                     ))}
                 </Flex>
-                <DragOverlay dropAnimation={defaultDropAnimation}>
+                <DragOverlay>
                     {activeId && activeCard ? (
                         <SortableCard
                             id={activeId}

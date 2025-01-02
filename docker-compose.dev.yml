@@ -27,17 +27,25 @@ services:
 
   client:
     container_name: client
-    build: ./client
+    build:
+      context: ./client
+    platform: linux/x86_64
     stdin_open: true
     tty: true
-    working_dir: /src
+    working_dir: /app
     ports:
       - "3000:3000"
     volumes:
-      - ./client:/src
-      - /src/node_modules
+      - ./client:/app
+      - /app/node_modules
+      - /app/.next
     env_file:
       - .env.dev
+    environment:
+      - NODE_ENV=development
+      - NEXT_TELEMETRY_DISABLED=1
+      - WATCHPACK_POLLING=true
+      - SHELL=/bin/zsh
     command: npm run dev
     depends_on:
       - server

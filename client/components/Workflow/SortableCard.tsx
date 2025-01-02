@@ -1,27 +1,34 @@
 import React from 'react';
+import { Box, Text, useColorModeValue } from '@chakra-ui/react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Box, Text, VStack, HStack, Badge, Icon } from '@chakra-ui/react';
-import { DragHandleIcon } from '@chakra-ui/icons';
 import type { ServiceRequest } from '../../types/service-request';
 
 interface SortableCardProps {
     id: string;
     card: ServiceRequest;
     column: string;
-    isDragging?: boolean;
     onClick?: () => void;
+    isDragging?: boolean;
 }
 
-const SortableCard: React.FC<SortableCardProps> = ({ id, card, column, isDragging, onClick }) => {
+const SortableCard: React.FC<SortableCardProps> = ({
+    id,
+    card,
+    column,
+    onClick,
+    isDragging = false,
+}) => {
     const {
         attributes,
         listeners,
         setNodeRef,
         transform,
         transition,
+        isDragging: isSortableDragging,
+        over,
     } = useSortable({
-        id,
+        id: id,
         data: {
             type: 'card',
             card,
@@ -29,76 +36,68 @@ const SortableCard: React.FC<SortableCardProps> = ({ id, card, column, isDraggin
         },
     });
 
-    if (!card) {
-        return null;
-    }
-
     const style = {
         transform: CSS.Transform.toString(transform),
         transition,
     };
 
-    const getUrgencyColor = (urgency: string) => {
-        switch (urgency.toLowerCase()) {
-            case 'high':
-                return 'red';
-            case 'medium':
-                return 'orange';
-            default:
-                return 'green';
-        }
-    };
+    const bgColor = useColorModeValue('white', 'gray.700');
+    const borderColor = useColorModeValue('gray.200', 'gray.600');
+    const shadowColor = useColorModeValue('gray.100', 'gray.900');
+
+    const isBeingDragged = isDragging || isSortableDragging;
+    const showTopIndicator = over?.id === id && over.data.current?.type === 'card';
 
     return (
         <Box
             ref={setNodeRef}
             style={style}
-            {...attributes}
-            cursor="pointer"
-            bg="white"
+            position="relative"
+            bg={bgColor}
             p={4}
             borderRadius="md"
-            boxShadow="md"
             borderWidth="1px"
-            opacity={isDragging ? 0.5 : 1}
-            _hover={{ boxShadow: 'lg' }}
-            mb={2}
-            position="relative"
-            onClick={onClick}
+            borderColor={borderColor}
+            boxShadow={isBeingDragged ? 'lg' : 'sm'}
+            opacity={isBeingDragged ? 0.5 : 1}
+            _hover={{
+                borderColor: 'blue.500',
+                boxShadow: 'md',
+            }}
+            _before={showTopIndicator ? {
+                content: '""',
+                position: 'absolute',
+                top: '-2px',
+                left: 0,
+                right: 0,
+                height: '4px',
+                backgroundColor: 'blue.500',
+                borderRadius: '2px',
+            } : undefined}
         >
-            {/* Drag Handle */}
             <Box
-                position="absolute"
-                top={2}
-                right={2}
-                cursor="grab"
+                {...attributes}
                 {...listeners}
-                p={1}
-                borderRadius="md"
-                _hover={{ bg: 'gray.100' }}
+                position="absolute"
+                top={0}
+                left={0}
+                right={0}
+                height="24px"
+                cursor="grab"
+                zIndex={1}
+            />
+            <Box
+                onClick={onClick}
+                cursor="pointer"
+                pt="4px"
             >
-                <Icon as={DragHandleIcon} color="gray.400" />
-            </Box>
-
-            <VStack align="stretch" spacing={2}>
-                <Text fontWeight="bold">
-                    {card.customer.first_name} {card.customer.last_name}
-                </Text>
-                <Text fontSize="sm" color="gray.600">
-                    {card.vehicle.year} {card.vehicle.make} {card.vehicle.model}
+                <Text fontWeight="medium" mb={2}>
+                    {card.customer?.first_name} {card.customer?.last_name}
                 </Text>
                 <Text fontSize="sm" color="gray.500">
-                    {new Date(card.appointment_date).toLocaleDateString()} {card.appointment_time}
+                    {card.vehicle?.make} {card.vehicle?.model}
                 </Text>
-                {/* Urgency Badge */}
-                {card.services?.[0]?.urgency && (
-                    <Box textAlign="right">
-                        <Badge colorScheme={getUrgencyColor(card.services[0].urgency)}>
-                            {card.services[0].urgency}
-                        </Badge>
-                    </Box>
-                )}
-            </VStack>
+            </Box>
         </Box>
     );
 };

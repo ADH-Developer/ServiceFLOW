@@ -16,6 +16,7 @@ interface WorkflowColumnProps {
     cards: ServiceRequest[];
     color: string;
     onCardClick: (card: ServiceRequest) => void;
+    activeId: string | null;
 }
 
 const WorkflowColumn: React.FC<WorkflowColumnProps> = ({
@@ -24,6 +25,7 @@ const WorkflowColumn: React.FC<WorkflowColumnProps> = ({
     cards,
     color,
     onCardClick,
+    activeId,
 }) => {
     const bgColor = useColorModeValue('white', 'gray.700');
     const borderColor = useColorModeValue('gray.200', 'gray.600');
@@ -33,7 +35,8 @@ const WorkflowColumn: React.FC<WorkflowColumnProps> = ({
         id: id,
         data: {
             type: 'column',
-            accepts: ['card']
+            accepts: ['card'],
+            column: id
         }
     });
 
@@ -50,8 +53,10 @@ const WorkflowColumn: React.FC<WorkflowColumnProps> = ({
             p={4}
             borderRadius="lg"
             borderWidth="1px"
-            borderColor={borderColor}
+            borderColor={isOver ? color : borderColor}
             flex="0 0 auto"
+            transition="all 0.2s ease"
+            _hover={{ borderColor: color }}
         >
             <Heading
                 size="md"
@@ -71,10 +76,24 @@ const WorkflowColumn: React.FC<WorkflowColumnProps> = ({
                 spacing={4}
                 align="stretch"
                 minH="100px"
-                bg={isOver ? dropBgColor : 'transparent'}
-                transition="background-color 0.2s ease"
+                bg={isOver && !cards.length ? dropBgColor : 'transparent'}
+                transition="all 0.2s ease"
                 borderRadius="md"
                 p={2}
+                position="relative"
+                role="group"
+                _before={isOver && !cards.length ? {
+                    content: '""',
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    borderRadius: 'md',
+                    border: '2px dashed',
+                    borderColor: color,
+                    pointerEvents: 'none'
+                } : undefined}
             >
                 <SortableContext
                     items={sortedCards.map(card => card.id.toString())}
@@ -87,6 +106,7 @@ const WorkflowColumn: React.FC<WorkflowColumnProps> = ({
                             card={card}
                             column={id}
                             onClick={() => onCardClick(card)}
+                            isDragging={activeId === card.id.toString()}
                         />
                     ))}
                 </SortableContext>

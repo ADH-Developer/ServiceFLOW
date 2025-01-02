@@ -18,10 +18,26 @@ import {
     HStack,
     Text,
 } from '@chakra-ui/react';
-import type { ServiceRequest } from '../../types/service-request';
+import type { Vehicle, Service } from '../../types/service-request';
+
+interface NewServiceRequest {
+    vehicle: {
+        year: string;
+        make: string;
+        model: string;
+    };
+    services: Array<{
+        service_type: string;
+        description: string;
+        urgency: 'low' | 'medium' | 'high';
+    }>;
+    status: 'estimates';
+    workflow_column: 'estimates';
+    workflow_position: number;
+}
 
 interface VehicleServiceFormProps {
-    onSubmit: (data: ServiceRequest) => void;
+    onSubmit: (data: NewServiceRequest) => void;
 }
 
 interface UrgencyOption {
@@ -31,17 +47,22 @@ interface UrgencyOption {
     color: string;
 }
 
+interface FormData {
+    vehicle: Partial<Vehicle>;
+    services: Array<Partial<Service>>;
+}
+
 export const VehicleServiceForm = ({ onSubmit }: VehicleServiceFormProps) => {
-    const [formData, setFormData] = useState<ServiceRequest>({
+    const [formData, setFormData] = useState<FormData>({
         vehicle: {
             year: '',
             make: '',
             model: ''
         },
         services: [{
-            serviceType: '',
+            service_type: '',
             description: '',
-            urgency: ''
+            urgency: 'low'
         }]
     });
 
@@ -115,14 +136,14 @@ export const VehicleServiceForm = ({ onSubmit }: VehicleServiceFormProps) => {
         setFormData({
             ...formData,
             services: [...formData.services, {
-                serviceType: '',
+                service_type: '',
                 description: '',
-                urgency: ''
+                urgency: 'low'
             }]
         });
     };
 
-    const updateService = (index: number, field: keyof ServiceRequest['services'][0], value: string) => {
+    const updateService = (index: number, field: keyof Service, value: string) => {
         const updatedServices = [...formData.services];
         updatedServices[index] = {
             ...updatedServices[index],
@@ -144,7 +165,7 @@ export const VehicleServiceForm = ({ onSubmit }: VehicleServiceFormProps) => {
         if (!formData.vehicle.model) newErrors.model = 'Model is required';
 
         formData.services.forEach((service, index) => {
-            if (!service.serviceType) newErrors[`service${index}Type`] = 'Service type is required';
+            if (!service.service_type) newErrors[`service${index}Type`] = 'Service type is required';
             if (!service.description) newErrors[`service${index}Description`] = 'Description is required';
             if (!service.urgency) newErrors[`service${index}Urgency`] = 'Urgency level is required';
         });
@@ -154,11 +175,17 @@ export const VehicleServiceForm = ({ onSubmit }: VehicleServiceFormProps) => {
             return;
         }
 
-        onSubmit(formData);
+        onSubmit({
+            vehicle: formData.vehicle,
+            services: formData.services,
+            status: 'estimates',
+            workflow_column: 'estimates',
+            workflow_position: 0
+        });
     };
 
     // Update vehicle field handler
-    const updateVehicle = (field: keyof ServiceRequest['vehicle'], value: string) => {
+    const updateVehicle = (field: keyof Vehicle, value: string) => {
         setFormData({
             ...formData,
             vehicle: {
@@ -243,8 +270,8 @@ export const VehicleServiceForm = ({ onSubmit }: VehicleServiceFormProps) => {
                                     <FormLabel>Service Type</FormLabel>
                                     <Select
                                         placeholder="Select service type"
-                                        value={service.serviceType}
-                                        onChange={(e) => updateService(index, 'serviceType', e.target.value)}
+                                        value={service.service_type}
+                                        onChange={(e) => updateService(index, 'service_type', e.target.value)}
                                     >
                                         {serviceTypes.map((type) => (
                                             <option key={type} value={type}>{type}</option>
@@ -254,11 +281,11 @@ export const VehicleServiceForm = ({ onSubmit }: VehicleServiceFormProps) => {
                                 </FormControl>
 
                                 <FormControl isInvalid={!!errors[`service${index}Description`]}>
-                                    <FormLabel>Description of Problem</FormLabel>
+                                    <FormLabel>Description</FormLabel>
                                     <Textarea
-                                        placeholder="Please describe the issue you're experiencing..."
                                         value={service.description}
                                         onChange={(e) => updateService(index, 'description', e.target.value)}
+                                        placeholder="Please describe the issue or service needed"
                                     />
                                     <FormErrorMessage>{errors[`service${index}Description`]}</FormErrorMessage>
                                 </FormControl>
@@ -269,84 +296,45 @@ export const VehicleServiceForm = ({ onSubmit }: VehicleServiceFormProps) => {
                                         value={service.urgency}
                                         onChange={(value) => updateService(index, 'urgency', value)}
                                     >
-                                        <HStack spacing={4} width="100%">
+                                        <VStack align="start" spacing={2}>
                                             {urgencyOptions.map((option) => (
                                                 <Tooltip
                                                     key={option.value}
                                                     label={option.description}
-                                                    hasArrow
-                                                    placement="top"
+                                                    placement="right"
                                                 >
-                                                    <Box
-                                                        as="label"
-                                                        cursor="pointer"
-                                                        borderWidth={1}
-                                                        borderRadius="md"
-                                                        p={3}
-                                                        _hover={{
-                                                            bg: `${option.color}50`,
-                                                            borderColor: option.color
-                                                        }}
-                                                        borderColor={service.urgency === option.value ? option.color : 'gray.200'}
-                                                        bg={service.urgency === option.value ? `${option.color}50` : 'transparent'}
-                                                        transition="all 0.2s"
-                                                        width="100%"
-                                                    >
-                                                        <Radio
-                                                            value={option.value}
-                                                            colorScheme={option.value === 'low' ? 'green' :
-                                                                option.value === 'medium' ? 'orange' : 'red'}
-                                                        >
-                                                            <Text color={option.color} fontWeight="semibold">
-                                                                {option.label}
-                                                            </Text>
-                                                        </Radio>
-                                                    </Box>
+                                                    <Radio value={option.value}>
+                                                        <HStack>
+                                                            <Text color={option.color}>{option.label}</Text>
+                                                        </HStack>
+                                                    </Radio>
                                                 </Tooltip>
                                             ))}
-                                        </HStack>
+                                        </VStack>
                                     </RadioGroup>
                                     <FormErrorMessage>{errors[`service${index}Urgency`]}</FormErrorMessage>
                                 </FormControl>
-
-                                {index > 0 && (
-                                    <Button
-                                        colorScheme="red"
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => {
-                                            const updatedServices = formData.services.filter((_, i) => i !== index);
-                                            setFormData({
-                                                ...formData,
-                                                services: updatedServices
-                                            });
-                                        }}
-                                    >
-                                        Remove Service Request
-                                    </Button>
-                                )}
                             </VStack>
                         </GridItem>
                     ))}
+
+                    <GridItem colSpan={2}>
+                        <Button onClick={handleAddService} width="full">
+                            Add Another Service
+                        </Button>
+                    </GridItem>
+
+                    <GridItem colSpan={2}>
+                        <Button
+                            type="submit"
+                            colorScheme="blue"
+                            size="lg"
+                            width="full"
+                        >
+                            Submit Service Request
+                        </Button>
+                    </GridItem>
                 </Grid>
-
-                <Button
-                    type="button"
-                    colorScheme="primary"
-                    variant="outline"
-                    width="full"
-                    onClick={handleAddService}
-                >
-                    Add Another Service
-                </Button>
-
-                <Button
-                    type="submit"
-                    colorScheme="primary"
-                    width="full"
-                >
-                    Next
-                </Button>
             </VStack>
         </Box>
     );

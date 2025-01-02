@@ -1,7 +1,12 @@
 import * as yup from 'yup';
 
-export const registerSchema = yup.object().shape({
-    user: yup.object().shape({
+export const loginSchema = yup.object({
+    email: yup.string().email('Invalid email').required('Email is required'),
+    password: yup.string().required('Password is required'),
+});
+
+export const registerSchema = yup.object({
+    user: yup.object({
         first_name: yup.string().required('First name is required'),
         last_name: yup.string().required('Last name is required'),
         email: yup.string().email('Invalid email').required('Email is required'),
@@ -17,10 +22,18 @@ export const registerSchema = yup.object().shape({
         .required('Contact preference is required'),
 });
 
-export const loginSchema = yup.object().shape({
-    email: yup.string().email('Invalid email').required('Email is required'),
-    password: yup.string().required('Password is required'),
-});
+export type LoginInput = {
+    email: string;
+    password: string;
+};
 
-export type RegisterInput = yup.InferType<typeof registerSchema>;
-export type LoginInput = yup.InferType<typeof loginSchema>; 
+export type RegisterInput = {
+    user: {
+        first_name: string;
+        last_name: string;
+        email: string;
+        password: string;
+    };
+    phone: string;
+    preferred_contact: 'email' | 'phone';
+}; 

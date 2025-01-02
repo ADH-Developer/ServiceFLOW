@@ -8,10 +8,11 @@ import {
     Grid,
     Badge,
     useColorModeValue,
+    Alert,
+    AlertIcon,
 } from '@chakra-ui/react';
 import { InfoIcon } from '@chakra-ui/icons';
-import { format, isSameDay, addMinutes, isAfter } from 'date-fns';
-import { utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
+import { format } from 'date-fns';
 import { appointmentsApi } from '../../lib/api-services';
 import { Calendar } from '../Calendar';
 
@@ -77,8 +78,6 @@ export const SchedulingForm = ({ onSubmit }: SchedulingFormProps) => {
 
     const handleSubmit = async () => {
         if (selectedDate && selectedTimeSlot) {
-            const shopTimeZone = 'America/New_York';
-
             // Parse the time slot
             const [timeStr, period] = selectedTimeSlot.split(' ');
             const [hours, minutes] = timeStr.split(':').map(Number);
@@ -131,6 +130,13 @@ export const SchedulingForm = ({ onSubmit }: SchedulingFormProps) => {
     return (
         <Box bg={calendarBg} p={6} borderRadius="lg" shadow="base">
             <VStack spacing={6} align="stretch">
+                {error && (
+                    <Alert status="error">
+                        <AlertIcon />
+                        {error}
+                    </Alert>
+                )}
+
                 <VStack spacing={4} align="stretch">
                     {/* Step 1: Date Selection */}
                     <Box>

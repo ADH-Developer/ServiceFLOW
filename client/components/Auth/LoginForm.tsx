@@ -9,7 +9,7 @@ import {
     FormErrorMessage,
     useToast,
 } from '@chakra-ui/react';
-import { useForm } from 'react-hook-form';
+import { useForm, SubmitHandler } from 'react-hook-form';
 import { yupResolver } from '@hookform/resolvers/yup';
 import { loginSchema, LoginInput } from '../../lib/validations/auth';
 import { customersApi } from '../../lib/api-services';
@@ -26,9 +26,10 @@ export const LoginForm = () => {
         formState: { errors },
     } = useForm<LoginInput>({
         resolver: yupResolver(loginSchema),
+        mode: 'onBlur',
     });
 
-    const onSubmit = async (data: LoginInput) => {
+    const onSubmit: SubmitHandler<LoginInput> = async (data) => {
         setIsLoading(true);
         try {
             const response = await customersApi.login(data);
@@ -62,17 +63,27 @@ export const LoginForm = () => {
         <Box as="form" onSubmit={handleSubmit(onSubmit)} width="100%">
             <VStack spacing={4}>
                 <FormControl isInvalid={!!errors.email}>
-                    <FormLabel>Email</FormLabel>
-                    <Input type="email" {...register('email')} />
-                    <FormErrorMessage>
+                    <FormLabel htmlFor="email">Email</FormLabel>
+                    <Input
+                        id="email"
+                        type="email"
+                        {...register('email')}
+                        aria-describedby="email-error"
+                    />
+                    <FormErrorMessage id="email-error">
                         {errors.email?.message}
                     </FormErrorMessage>
                 </FormControl>
 
                 <FormControl isInvalid={!!errors.password}>
-                    <FormLabel>Password</FormLabel>
-                    <Input type="password" {...register('password')} />
-                    <FormErrorMessage>
+                    <FormLabel htmlFor="password">Password</FormLabel>
+                    <Input
+                        id="password"
+                        type="password"
+                        {...register('password')}
+                        aria-describedby="password-error"
+                    />
+                    <FormErrorMessage id="password-error">
                         {errors.password?.message}
                     </FormErrorMessage>
                 </FormControl>
