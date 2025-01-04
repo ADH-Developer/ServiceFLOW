@@ -4,7 +4,6 @@ import {
     Flex,
     Icon,
     useColorModeValue,
-    Link,
     BoxProps,
     FlexProps,
     useDisclosure,
@@ -18,6 +17,8 @@ import {
     Tabs,
     TabList,
     Tab,
+    LinkBox,
+    LinkOverlay,
 } from '@chakra-ui/react';
 import {
     FiHome,
@@ -31,6 +32,7 @@ import {
 } from 'react-icons/fi';
 import { useTab } from '../../contexts/TabContext';
 import { useRouter } from 'next/router';
+import Link from 'next/link';
 import { customersApi } from '../../lib/api-services';
 
 interface LinkItemProps {
@@ -89,19 +91,8 @@ interface NavItemProps extends FlexProps {
 }
 
 const NavItem = ({ icon, path, children, ...rest }: NavItemProps) => {
-    const router = useRouter();
-
     return (
-        <Box
-            as="a"
-            href={path}
-            onClick={(e) => {
-                e.preventDefault();
-                router.push(path);
-            }}
-            width="100%"
-            style={{ textDecoration: 'none' }}
-        >
+        <LinkBox as="div" width="100%">
             <Flex
                 align="center"
                 p="4"
@@ -125,32 +116,16 @@ const NavItem = ({ icon, path, children, ...rest }: NavItemProps) => {
                         as={icon}
                     />
                 )}
-                {children}
+                <LinkOverlay as={Link} href={path}>
+                    {children}
+                </LinkOverlay>
             </Flex>
-        </Box>
+        </LinkBox>
     );
 };
 
-interface Customer {
-    first_name: string;
-    last_name: string;
-}
-
-interface Vehicle {
-    year: string;
-    make: string;
-    model: string;
-}
-
-interface Appointment {
-    appointment_date: string;
-    appointment_time: string;
-    customer?: Customer;
-    vehicle?: Vehicle;
-}
-
 export default function AdminDashboardLayout({ children }: { children: ReactNode }) {
-    const { isOpen, onOpen, onClose } = useDisclosure();
+    const { onClose } = useDisclosure();
     const { activeTab, setActiveTab } = useTab();
     const bg = useColorModeValue('white', 'gray.900');
     const borderColor = useColorModeValue('gray.200', 'gray.700');

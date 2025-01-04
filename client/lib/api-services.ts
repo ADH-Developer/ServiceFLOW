@@ -1,7 +1,7 @@
 import apiClient from './api-client';
-import type { ServiceRequest } from '../types/service-request';
+import type { ServiceRequest } from '../types';
 import type { RegisterInput } from './validations/auth';
-import { format } from 'date-fns-tz'
+import { transformApiToUiRequest, transformApiToUiComment } from '../types/transformers';
 
 export const serviceRequestsApi = {
     create: async (data: ServiceRequest & {
@@ -40,7 +40,7 @@ export const serviceRequestsApi = {
                     year: parseInt(data.vehicle.year)
                 },
                 services: data.services.map(service => ({
-                    service_type: service.serviceType,
+                    service_type: service.service_type,
                     description: service.description,
                     urgency: service.urgency.toLowerCase()
                 })),
@@ -120,16 +120,24 @@ export const customersApi = {
 
 export const workflowApi = {
     getBoardState: async () => {
-        const response = await apiClient.get('/api/customers/admin/workflow/');
-        return response.data;
+        const response = await apiClient.get('/workflow/board/');
+        return {
+            ...response.data,
+            columns: Object.fromEntries(
+                Object.entries(response.data.columns).map(([key, cards]) => [
+                    key,
+                    (cards as any[]).map(transformApiToUiRequest)
+                ])
+            )
+        };
     },
 
-    moveCard: async (cardId: string | number, toColumn: string, position: number) => {
-        const response = await apiClient.post(`/api/customers/admin/workflow/${cardId}/move_card/`, {
-            to_column: toColumn,
-            position: position,
+    moveCard: async (cardId: string | number, column: string, position: number) => {
+        const response = await apiClient.post(`/workflow/${cardId}/move/`, {
+            column,
+            position
         });
-        return response.data;
+        return transformApiToUiRequest(response.data);
     },
 
     getComments: async (cardId: string | number) => {
@@ -138,10 +146,10 @@ export const workflowApi = {
     },
 
     addComment: async (cardId: string | number, text: string) => {
-        const response = await apiClient.post(`/api/customers/admin/workflow/${cardId}/comments/`, {
-            text,
+        const response = await apiClient.post(`/workflow/${cardId}/comments/`, {
+            text
         });
-        return response.data;
+        return transformApiToUiComment(response.data);
     },
 
     deleteComment: async (cardId: string | number, commentId: number) => {

@@ -1,0 +1,28 @@
+{
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "jsx": "react-jsx",
+        "types": [
+            "jest",
+            "node",
+            "@types/jest",
+            "@jest/globals"
+        ],
+        "module": "ESNext",
+        "target": "es2017",
+        "isolatedModules": false,
+        "noEmit": true,
+        "esModuleInterop": true,
+        "moduleResolution": "node"
+    },
+    "include": [
+        "tests/**/*.ts",
+        "tests/**/*.tsx",
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "jest.setup.js"
+    ],
+    "exclude": [
+        "node_modules"
+    ]
+}

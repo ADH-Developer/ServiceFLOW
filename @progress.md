@@ -37,7 +37,20 @@
 - [x] WebSocket error handling
 - [x] Exponential backoff implementation
 
+### Testing Infrastructure
+- [x] Jest configuration setup
+- [x] API connectivity test setup
+- [ ] Unit test framework setup
+- [ ] Integration test framework setup
+- [ ] E2E test framework setup
+
 ## In Progress 🔄
+
+### Testing & Validation
+- [x] API connectivity testing
+- [ ] Authentication flow testing
+- [ ] WebSocket connection testing
+- [ ] Error handling validation
 
 ### Bug Fixes & Optimizations
 - [x] WebSocket connection stability
@@ -54,9 +67,6 @@
 ## Pending Features 📝
 
 ### Post-MVP Features
-- [ ] Unit tests (moved to post-MVP)
-- [ ] E2E tests (moved to post-MVP)
-- [ ] Integration tests (moved to post-MVP)
 - [ ] Advanced reporting
 - [ ] Customer portal
 - [ ] Email notifications
@@ -66,7 +76,8 @@
 - [ ] Invoice generation
 
 ## Notes 📌
-- Testing has been moved to post-MVP phase to focus on core functionality
+- Testing infrastructure has been set up with Jest and API connectivity tests
+- Testing is now being integrated into the development workflow
 - Priority is on stabilizing current features and improving user experience
 - Documentation will be updated as features are completed
 - WebSocket stability has been significantly improved with exponential backoff and better error handling

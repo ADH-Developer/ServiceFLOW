@@ -2,12 +2,14 @@ import {
   extendTheme,
   withDefaultColorScheme,
   theme as baseTheme,
+  ThemeConfig,
 } from "@chakra-ui/react";
 import { Input } from "./components/input.theme";
-import { mode } from "@chakra-ui/theme-tools";
+import { mode, StyleFunctionProps } from "@chakra-ui/theme-tools";
 import { Button } from "./components/button.theme";
 import { Container } from "./components/container.theme";
 import { Select } from "./components/select.theme";
+
 export const customTheme = extendTheme(
   {
     fonts: {
@@ -37,7 +39,7 @@ export const customTheme = extendTheme(
       },
     },
     styles: {
-      global: (props) => ({
+      global: (props: StyleFunctionProps) => ({
         body: {
           bg: mode("#f8f9fb", "#292E39")(props),
         },

@@ -153,7 +153,7 @@ const NavItem = ({ icon, path, children, ...rest }: NavItemProps) => {
 };
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
-    const { isOpen, onOpen, onClose } = useDisclosure();
+    const { onClose } = useDisclosure();
 
     return (
         <Box minH="100vh" bg={useColorModeValue('gray.100', 'gray.900')}>

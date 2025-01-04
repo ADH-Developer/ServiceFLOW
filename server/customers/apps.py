@@ -1,42 +1,27 @@
-import logging
-import os
+import threading
 
 from django.apps import AppConfig
-from django.core.cache import cache
+from django.db.models.signals import post_migrate
 
-logger = logging.getLogger(__name__)
+
+def warm_appointment_cache(sender, **kwargs):
+    """Warm the appointment cache after migrations"""
+    from customers.cache import AppointmentCache
+
+    def _warm_cache():
+        try:
+            AppointmentCache.update_cache()
+        except Exception as e:
+            print(f"Error warming appointment cache: {e}")
+
+    # Run in a separate thread
+    thread = threading.Thread(target=_warm_cache)
+    thread.start()
 
 
 class CustomersConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "customers"
-    path = os.path.dirname(os.path.abspath(__file__))
 
     def ready(self):
-        """Warm up cache when Django starts"""
-        try:
-            # Import here to avoid circular import
-            from datetime import date
-
-            from .models import ServiceRequest
-            from .serializers import ServiceRequestSerializer
-
-            # Get initial pending count
-            count = ServiceRequest.objects.filter(status="pending").count()
-            cache.set("pending_appointments_count", count, 300)
-
-            # Get initial today's appointments
-            today = date.today()
-            today_appointments = (
-                ServiceRequest.objects.filter(appointment_date=today)
-                .select_related("customer__user", "vehicle")
-                .prefetch_related("services")
-                .order_by("appointment_time")
-            )
-            serializer = ServiceRequestSerializer(today_appointments, many=True)
-            appointments_data = serializer.data
-            cache.set("today_appointments", appointments_data, 300)
-
-            logger.info("Appointment cache warmed up on startup")
-        except Exception as e:
-            logger.error(f"Error warming appointment cache on startup: {e}")
+        post_migrate.connect(warm_appointment_cache, sender=self)

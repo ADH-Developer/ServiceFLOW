@@ -1,8 +1,9 @@
 import React from 'react';
-import { Box, Text, useColorModeValue } from '@chakra-ui/react';
+import { Box, Text, useColorModeValue, Icon } from '@chakra-ui/react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { ServiceRequest } from '../../types/service-request';
+import { DragHandleIcon } from '@chakra-ui/icons';
+import type { ServiceRequest } from '../../types';
 
 interface SortableCardProps {
     id: string;
@@ -43,10 +44,15 @@ const SortableCard: React.FC<SortableCardProps> = ({
 
     const bgColor = useColorModeValue('white', 'gray.700');
     const borderColor = useColorModeValue('gray.200', 'gray.600');
-    const shadowColor = useColorModeValue('gray.100', 'gray.900');
 
     const isBeingDragged = isDragging || isSortableDragging;
     const showTopIndicator = over?.id === id && over.data.current?.type === 'card';
+
+    // Format customer name
+    const customerName = `${card.customer.first_name} ${card.customer.last_name}`;
+
+    // Format vehicle info
+    const vehicleInfo = `${card.vehicle.make} ${card.vehicle.model}`;
 
     return (
         <Box
@@ -60,6 +66,8 @@ const SortableCard: React.FC<SortableCardProps> = ({
             borderColor={borderColor}
             boxShadow={isBeingDragged ? 'lg' : 'sm'}
             opacity={isBeingDragged ? 0.5 : 1}
+            cursor="pointer"
+            onClick={onClick}
             _hover={{
                 borderColor: 'blue.500',
                 boxShadow: 'md',
@@ -75,29 +83,28 @@ const SortableCard: React.FC<SortableCardProps> = ({
                 borderRadius: '2px',
             } : undefined}
         >
+            {/* Drag Handle */}
             <Box
                 {...attributes}
                 {...listeners}
                 position="absolute"
-                top={0}
-                left={0}
-                right={0}
-                height="24px"
+                top={2}
+                right={2}
                 cursor="grab"
-                zIndex={1}
-            />
-            <Box
-                onClick={onClick}
-                cursor="pointer"
-                pt="4px"
+                p={1}
+                borderRadius="md"
+                _hover={{ bg: 'gray.100' }}
+                onClick={(e) => e.stopPropagation()}
             >
-                <Text fontWeight="medium" mb={2}>
-                    {card.customer?.first_name} {card.customer?.last_name}
-                </Text>
-                <Text fontSize="sm" color="gray.500">
-                    {card.vehicle?.make} {card.vehicle?.model}
-                </Text>
+                <DragHandleIcon boxSize={4} color="gray.500" />
             </Box>
+
+            <Text fontWeight="medium" mb={2} pr={8}>
+                {customerName}
+            </Text>
+            <Text fontSize="sm" color="gray.500">
+                {vehicleInfo}
+            </Text>
         </Box>
     );
 };

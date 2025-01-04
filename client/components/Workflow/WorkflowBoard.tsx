@@ -13,17 +13,11 @@ import {
 import { arrayMove } from '@dnd-kit/sortable';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import WorkflowColumn from './WorkflowColumn';
-import type { ServiceRequest } from '../../types/service-request';
+import { ServiceRequest, WorkflowState, WorkflowStatus, WebSocketMessage, Vehicle, Service, WorkflowHistory, Comment, Label } from '../../types/core';
 import { api } from '../../utils/api';
 import { workflowApi } from '../../lib/api-services';
 import CardDetail from './CardDetail';
 import SortableCard from './SortableCard';
-
-interface BoardState {
-    [key: string]: ServiceRequest[];
-}
-
-type WorkflowStatus = 'estimates' | 'in_progress' | 'waiting_parts' | 'completed';
 
 const COLUMN_COLORS = {
     estimates: 'cyan.400',
@@ -32,8 +26,35 @@ const COLUMN_COLORS = {
     completed: 'gray.400',
 } as const;
 
-const transformBoardData = (data: any): BoardState => {
-    const transformed: BoardState = {};
+interface RawCustomer {
+    user: {
+        first_name: string;
+        last_name: string;
+        email: string;
+    };
+    phone_number: string;
+}
+
+interface RawServiceRequest {
+    id: string | number;
+    customer: RawCustomer;
+    vehicle: Vehicle;
+    services: Service[];
+    status: string;
+    created_at: string;
+    updated_at: string;
+    workflow_column: WorkflowStatus;
+    workflow_position: number;
+    workflow_history: WorkflowHistory[];
+    comments: Comment[];
+    labels: Label[];
+    appointment_date: string;
+    appointment_time: string;
+    after_hours_dropoff?: boolean;
+}
+
+const transformBoardData = (data: { [key: string]: RawServiceRequest[] }): WorkflowState => {
+    const transformed: WorkflowState = {};
     if (!data || typeof data !== 'object') {
         console.warn('Invalid data received:', data);
         return transformed;
@@ -41,21 +62,24 @@ const transformBoardData = (data: any): BoardState => {
 
     Object.entries(data).forEach(([key, value]) => {
         // Filter out any invalid cards
-        const validCards = Array.isArray(value) ? (value as any[]).filter(card =>
+        const validCards = Array.isArray(value) ? value.filter(card =>
             card &&
             card.id &&
             typeof card.id !== 'undefined' &&
-            card.customer?.user &&  // Check for nested user data
+            card.customer?.user &&
             card.vehicle
         ) : [];
 
         transformed[key] = validCards.map(card => ({
             ...card,
+            id: Number(card.id),
             customer: {
-                ...card.customer,
+                id: 0, // Server doesn't send this
                 first_name: card.customer.user.first_name,
                 last_name: card.customer.user.last_name,
-                email: card.customer.user.email
+                email: card.customer.user.email,
+                phone: card.customer.phone_number,
+                preferred_contact: 'email' // Default value since server doesn't send this
             }
         }));
     });
@@ -88,7 +112,7 @@ const ErrorState = ({ message, onRetry }: { message: string; onRetry: () => void
 );
 
 const WorkflowBoard: React.FC = () => {
-    const [boardState, setBoardState] = useState<BoardState>({});
+    const [boardState, setBoardState] = useState<WorkflowState>({});
     const [columnOrder, setColumnOrder] = useState<string[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -125,42 +149,71 @@ const WorkflowBoard: React.FC = () => {
     };
 
     // Handle WebSocket messages
-    const handleMessage = useCallback((data: any) => {
+    const handleMessage = useCallback((data: WebSocketMessage) => {
         if (!data) {
-            console.log('Received empty WebSocket message');
+            console.log('[WorkflowBoard] Received empty WebSocket message');
             return;
         }
 
         try {
-            console.log('Received WebSocket message:', {
+            // Handle heartbeat responses
+            if (data.type === 'pong') {
+                return;
+            }
+
+            console.log('[WorkflowBoard] Received WebSocket message:', {
                 type: data.type,
+                timestamp: new Date().toISOString(),
                 data: data
             });
 
             const now = Date.now();
             if (now - lastUpdateRef.current > 1000) {
-                if (data.type === 'workflow_update' && data.data?.columns) {
-                    console.log('Received workflow update:', data.data);
+                if (data.type === 'workflow_update') {
+                    console.log('[WorkflowBoard] Processing workflow update:', {
+                        timestamp: new Date().toISOString(),
+                        columnCount: Object.keys(data.data.columns).length,
+                        totalCards: Object.values(data.data.columns).flat().length
+                    });
                     setBoardState(transformBoardData(data.data.columns));
                     setColumnOrder(data.data.column_order || Object.keys(data.data.columns));
                     lastUpdateRef.current = now;
                 } else if (data.type === 'card_moved' && data.success) {
-                    // Trigger a refresh of the board state
+                    console.log('[WorkflowBoard] Card movement confirmed:', {
+                        timestamp: new Date().toISOString(),
+                        success: data.success
+                    });
                     loadBoardState();
                     lastUpdateRef.current = now;
                 }
             }
         } catch (err) {
-            console.error('Error handling WebSocket message:', err);
+            console.error('[WorkflowBoard] Error handling WebSocket message:', err);
+            if (err instanceof Error) {
+                console.error('Error details:', {
+                    message: err.message,
+                    stack: err.stack
+                });
+            }
             setError('Error updating workflow board');
         }
     }, []);
 
     // WebSocket connection
-    const { isConnected } = useWebSocket({
+    const { isConnected, connectionAttempts, lastMessageTime } = useWebSocket({
         url: '/ws/admin/workflow/',
         onMessage: handleMessage,
+        fallbackPollInterval: 30000, // 30 seconds fallback polling
     });
+
+    // Connection status effect
+    useEffect(() => {
+        console.log('[WorkflowBoard] WebSocket connection status:', {
+            isConnected,
+            connectionAttempts,
+            lastMessageTime: new Date(lastMessageTime).toISOString()
+        });
+    }, [isConnected, connectionAttempts, lastMessageTime]);
 
     // Initial load
     useEffect(() => {
@@ -169,6 +222,7 @@ const WorkflowBoard: React.FC = () => {
 
     // Handle retry
     const handleRetry = () => {
+        console.log('[WorkflowBoard] Retrying board state load');
         setIsRetrying(true);
         loadBoardState();
     };

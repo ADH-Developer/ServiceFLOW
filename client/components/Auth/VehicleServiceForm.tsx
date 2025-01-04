@@ -18,19 +18,14 @@ import {
     HStack,
     Text,
 } from '@chakra-ui/react';
-import type { Vehicle, Service } from '../../types/service-request';
+import { Vehicle, Service } from '../../types';
+
+type VehicleFormData = Pick<Vehicle, 'year' | 'make' | 'model'>;
+type ServiceFormData = Pick<Service, 'service_type' | 'description' | 'urgency'>;
 
 interface NewServiceRequest {
-    vehicle: {
-        year: string;
-        make: string;
-        model: string;
-    };
-    services: Array<{
-        service_type: string;
-        description: string;
-        urgency: 'low' | 'medium' | 'high';
-    }>;
+    vehicle: VehicleFormData;
+    services: ServiceFormData[];
     status: 'estimates';
     workflow_column: 'estimates';
     workflow_position: number;
@@ -41,15 +36,15 @@ interface VehicleServiceFormProps {
 }
 
 interface UrgencyOption {
-    value: string;
+    value: Service['urgency'];
     label: string;
     description: string;
     color: string;
 }
 
 interface FormData {
-    vehicle: Partial<Vehicle>;
-    services: Array<Partial<Service>>;
+    vehicle: VehicleFormData;
+    services: ServiceFormData[];
 }
 
 export const VehicleServiceForm = ({ onSubmit }: VehicleServiceFormProps) => {
@@ -175,13 +170,24 @@ export const VehicleServiceForm = ({ onSubmit }: VehicleServiceFormProps) => {
             return;
         }
 
-        onSubmit({
-            vehicle: formData.vehicle,
-            services: formData.services,
-            status: 'estimates',
-            workflow_column: 'estimates',
-            workflow_position: 0
-        });
+        // Ensure all required fields are present before submitting
+        if (formData.vehicle.year && formData.vehicle.make && formData.vehicle.model) {
+            onSubmit({
+                vehicle: {
+                    year: formData.vehicle.year,
+                    make: formData.vehicle.make,
+                    model: formData.vehicle.model
+                },
+                services: formData.services.map(service => ({
+                    service_type: service.service_type || '',
+                    description: service.description || '',
+                    urgency: service.urgency || 'low'
+                })),
+                status: 'estimates',
+                workflow_column: 'estimates',
+                workflow_position: 0
+            });
+        }
     };
 
     // Update vehicle field handler

@@ -7,7 +7,7 @@ import {
 } from '@chakra-ui/react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import type { ServiceRequest } from '../../types/service-request';
+import type { ServiceRequest } from '../../types';
 import SortableCard from './SortableCard';
 
 interface WorkflowColumnProps {

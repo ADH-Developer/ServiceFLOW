@@ -27,7 +27,7 @@ import {
     Spinner,
 } from '@chakra-ui/react';
 import { FiPlus, FiX, FiMessageSquare, FiTag } from 'react-icons/fi';
-import type { ServiceRequest, Comment } from '../../types/service-request';
+import type { ServiceRequest, Comment } from '../../types';
 import { api } from '../../utils/api';
 
 interface CardDetailProps {
@@ -68,21 +68,10 @@ const CardDetail: React.FC<CardDetailProps> = ({
             }
         };
 
-        if (isOpen) {
+        if (isOpen && card.id) {
             fetchComments();
         }
     }, [isOpen, card.id, toast]);
-
-    const formatDate = (dateStr: string) => {
-        return new Date(dateStr).toLocaleDateString();
-    };
-
-    const formatTime = (timeStr: string) => {
-        return new Date(`2000-01-01T${timeStr}`).toLocaleTimeString([], {
-            hour: 'numeric',
-            minute: '2-digit',
-        });
-    };
 
     const getUrgencyColor = (urgency: string) => {
         switch (urgency.toLowerCase()) {

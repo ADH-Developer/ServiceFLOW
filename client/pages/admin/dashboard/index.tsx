@@ -15,6 +15,7 @@ import { AppointmentsList } from '../../../components/Dashboard/AppointmentsList
 import { useTab } from '../../../contexts/TabContext';
 import { withStaffAuth } from '../../../utils/withStaffAuth';
 import { Appointment } from '../../../types/appointment';
+import { AppointmentListItem } from '../../../types';
 import { useWebSocket } from '../../../hooks/useWebSocket';
 
 const LoadingSpinner = () => (
@@ -27,7 +28,28 @@ interface ServiceAdvisorContentProps {
     todayAppointments: Appointment[];
 }
 
+const convertToListItem = (appointment: Appointment): AppointmentListItem => ({
+    id: parseInt(appointment.id),
+    appointment_date: appointment.appointment_date,
+    appointment_time: appointment.appointment_time,
+    customer: {
+        first_name: appointment.customer.first_name,
+        last_name: appointment.customer.last_name
+    },
+    vehicle: {
+        year: appointment.vehicle.year,
+        make: appointment.vehicle.make,
+        model: appointment.vehicle.model
+    },
+    services: appointment.services.map(service => ({
+        service_type: service.service_type,
+        urgency: service.urgency as 'low' | 'medium' | 'high'
+    }))
+});
+
 const ServiceAdvisorContent = ({ todayAppointments }: ServiceAdvisorContentProps) => {
+    const appointmentListItems = todayAppointments.map(convertToListItem);
+
     return (
         <Box>
             <Text fontSize="2xl" fontWeight="bold" mb={6}>
@@ -45,7 +67,7 @@ const ServiceAdvisorContent = ({ todayAppointments }: ServiceAdvisorContentProps
                     Today's Schedule
                 </Text>
                 {todayAppointments.length > 0 ? (
-                    <AppointmentsList appointments={todayAppointments} />
+                    <AppointmentsList appointments={appointmentListItems} />
                 ) : (
                     <Text>No appointments scheduled for today</Text>
                 )}

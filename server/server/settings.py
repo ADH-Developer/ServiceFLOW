@@ -204,13 +204,14 @@ JAZZMIN_UI_TWEAKS = {
 }
 
 # CORS settings
-CORS_ALLOW_ALL_ORIGINS = True  # For development only
+CORS_ALLOW_ALL_ORIGINS = False  # More secure configuration
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
+    "http://localhost:3001",
 ]
 CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^http://localhost:3000$",
+    r"^http://localhost:300[0-1]$",
 ]
 CORS_ALLOW_METHODS = [
     "DELETE",
@@ -230,6 +231,18 @@ CORS_ALLOW_HEADERS = [
     "user-agent",
     "x-csrftoken",
     "x-requested-with",
+    "sec-websocket-protocol",
+    "sec-websocket-version",
+    "sec-websocket-extensions",
+    "sec-websocket-key",
+]
+
+# Add WebSocket to allowed HTTP methods
+CORS_ALLOW_METHODS.append("WEBSOCKET")
+
+# Allow credentials for WebSocket connections
+CORS_EXPOSE_HEADERS = [
+    "sec-websocket-accept",
 ]
 
 # Channel layer settings

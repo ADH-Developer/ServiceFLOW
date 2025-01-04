@@ -29,6 +29,7 @@ services:
     container_name: client
     build:
       context: ./client
+      target: development
     platform: linux/x86_64
     stdin_open: true
     tty: true
@@ -36,7 +37,20 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./client:/app
+      - ./client/components:/app/components
+      - ./client/lib:/app/lib
+      - ./client/pages:/app/pages
+      - ./client/styles:/app/styles
+      - ./client/types:/app/types
+      - ./client/hooks:/app/hooks
+      - ./client/scripts:/app/scripts
+      - ./client/public:/app/public
+      - ./client/themes:/app/themes
+      - ./client/contexts:/app/contexts
+      - ./client/utils:/app/utils
+      - ./client/tests:/app/tests
+      - ./client/jest.config.js:/app/jest.config.js
+      - ./client/jest.setup.js:/app/jest.setup.js
       - /app/node_modules
       - /app/.next
     env_file:

@@ -4,15 +4,14 @@ from urllib.parse import parse_qs
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
+from customers.models import ServiceRequest
+from customers.serializers import ServiceRequestSerializer
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import AccessToken
-
-from .models import ServiceRequest
-from .serializers import ServiceRequestSerializer
 
 logger = logging.getLogger("django.channels")
 
@@ -180,7 +179,7 @@ class WorkflowConsumer(AsyncWebsocketConsumer):
             workflow_state = await self.get_workflow_state()
             if workflow_state:
                 try:
-                    # Send initial state
+                    # Send initial state with a small delay to ensure connection is established
                     await self.send(
                         text_data=json.dumps(
                             {"type": "workflow_update", "data": workflow_state}
@@ -198,7 +197,7 @@ class WorkflowConsumer(AsyncWebsocketConsumer):
             await self.close()
             return
         except Exception as e:
-            logger.error(f"Error in connect: {e}")
+            logger.error(f"Error in WebSocket connection: {e}")
             logger.exception(e)
             await self.close()
             return
@@ -214,156 +213,87 @@ class WorkflowConsumer(AsyncWebsocketConsumer):
         logger.info(
             f"User {self.scope.get('user')} disconnected from workflow websocket"
         )
-        # Leave the workflow group
         await self.channel_layer.group_discard("workflow", self.channel_name)
+
+    async def receive(self, text_data):
+        try:
+            data = json.loads(text_data)
+            if data["type"] == "card_moved":
+                await self.handle_card_moved(data)
+            elif data["type"] == "ping":
+                await self.send(text_data=json.dumps({"type": "pong"}))
+        except json.JSONDecodeError:
+            logger.error("Received invalid JSON data")
+        except KeyError:
+            logger.error("Received data missing required fields")
+        except Exception as e:
+            logger.error(f"Error handling message: {e}")
+            logger.exception(e)
 
     @database_sync_to_async
     def get_workflow_state(self):
         try:
-            from .cache import WorkflowCache
-
-            board_state = WorkflowCache.get_board_state()
-            if not board_state:
-                logger.warning("No board state found in cache")
-                return None
-
-            return {
-                "columns": board_state,
-                "column_order": [c[0] for c in ServiceRequest.WORKFLOW_COLUMN_CHOICES],
-            }
+            # Get all service requests grouped by status
+            service_requests = ServiceRequest.objects.all()
+            columns = {}
+            for request in service_requests:
+                if request.status not in columns:
+                    columns[request.status] = []
+                columns[request.status].append(ServiceRequestSerializer(request).data)
+            return {"columns": columns}
         except Exception as e:
             logger.error(f"Error getting workflow state: {e}")
             logger.exception(e)
             return None
 
-    async def send_workflow_state(self):
-        try:
-            workflow_state = await self.get_workflow_state()
-            if workflow_state:
-                message = {"type": "workflow_update", "data": workflow_state}
-                await self.send(text_data=json.dumps(message))
-                logger.info(f"Successfully sent workflow state to {self.channel_name}")
-        except Exception as e:
-            logger.error(f"Error sending workflow state: {e}")
-
-    async def receive(self, text_data):
-        if not self.scope.get("user") or not self.scope["user"].is_staff:
-            logger.warning("Unauthorized user attempted to send workflow update")
-            return
-
-        try:
-            data = json.loads(text_data)
-            if data.get("type") == "card_moved":
-                await self.update_card_position(data)
-                # Broadcast the update to all connected clients
-                await self.channel_layer.group_send(
-                    "workflow",
-                    {
-                        "type": "workflow_update",
-                        "data": await self.get_workflow_state(),
-                    },
-                )
-        except json.JSONDecodeError as e:
-            logger.error(f"Error decoding WebSocket message: {e}")
-        except Exception as e:
-            logger.error(f"Error processing WebSocket message: {e}")
-
     @database_sync_to_async
-    def update_card_position(self, data):
+    def update_card_position(self, card_id, new_status, position):
         try:
-            from django.db import transaction
-            from django.db.models import F
-
-            from .models import ServiceRequest
-
             with transaction.atomic():
-                # Get the service request to move
-                service_request = ServiceRequest.objects.select_for_update().get(
-                    id=data["card_id"]
-                )
-                old_column = service_request.workflow_column
-                new_column = data["new_status"]
+                # Get the card
+                card = ServiceRequest.objects.get(id=card_id)
 
-                if old_column != new_column:
-                    # Get the target position
-                    target_position = data.get("position", 0)
+                # Update positions of other cards in the target column
+                ServiceRequest.objects.filter(
+                    status=new_status, position__gte=position
+                ).update(position=F("position") + 1)
 
-                    # Move the card to the new column
-                    service_request.workflow_column = new_column
-                    service_request.workflow_position = target_position
-                    service_request.save()
+                # Update the moved card
+                card.status = new_status
+                card.position = position
+                card.save()
 
-                    # Reset positions in both columns to ensure they're sequential
-                    # This is a heavy operation but ensures consistency
-                    for column in [old_column, new_column]:
-                        cards = (
-                            ServiceRequest.objects.filter(workflow_column=column)
-                            .exclude(id=service_request.id)
-                            .order_by("workflow_position")
-                        )
-
-                        for index, card in enumerate(cards):
-                            if card.workflow_position != index:
-                                card.workflow_position = index
-                                card.save(update_fields=["workflow_position"])
-
-                    # Update cache
-                    from .cache import WorkflowCache
-
-                    WorkflowCache.move_card(
-                        service_request.id,
-                        new_column,
-                        service_request.workflow_position,
-                    )
-
-                    logger.info(
-                        f"Card {service_request.id} moved to {new_column} at position {service_request.workflow_position}"
-                    )
-
-                    # Send success response
-                    async_to_sync(self.send)(
-                        json.dumps(
-                            {
-                                "type": "card_moved",
-                                "success": True,
-                                "card_id": service_request.id,
-                                "new_column": new_column,
-                                "position": service_request.workflow_position,
-                            }
-                        )
-                    )
-
-                    # Broadcast update to all clients
-                    async_to_sync(self.channel_layer.group_send)(
-                        "workflow",
-                        {
-                            "type": "workflow_update",
-                            "data": async_to_sync(self.get_workflow_state)(),
-                        },
-                    )
-
-                    return True
-
-            return False
-
+                return True, ServiceRequestSerializer(card).data
+        except ServiceRequest.DoesNotExist:
+            logger.error(f"Card {card_id} not found")
+            return False, None
         except Exception as e:
-            logger.error(f"Error moving card {data['card_id']}: {e}")
-            # Send error response
-            async_to_sync(self.send)(
-                json.dumps(
-                    {
-                        "type": "card_moved",
-                        "success": False,
-                        "error": str(e),
-                    }
-                )
+            logger.error(f"Error updating card position: {e}")
+            logger.exception(e)
+            return False, None
+
+    async def handle_card_moved(self, data):
+        success, updated_card = await self.update_card_position(
+            data["card_id"], data["new_column"], data["position"]
+        )
+
+        response = {
+            "type": "card_moved",
+            "success": success,
+            "card_id": data["card_id"],
+            "new_column": data["new_column"],
+            "position": data["position"],
+        }
+
+        if success:
+            # Broadcast the update to all clients
+            await self.channel_layer.group_send(
+                "workflow", {"type": "workflow.card_moved", "message": response}
             )
-            return False
+        else:
+            # Send failure response only to the client that made the request
+            await self.send(text_data=json.dumps(response))
 
-    async def workflow_update(self, event):
-        """Forward workflow updates to the client"""
-        try:
-            await self.send(text_data=json.dumps(event))
-            logger.info(f"Successfully sent workflow update to {self.channel_name}")
-        except Exception as e:
-            logger.error(f"Error sending workflow update: {e}")
+    async def workflow_card_moved(self, event):
+        # Forward the card moved message to the client
+        await self.send(text_data=json.dumps(event["message"]))
