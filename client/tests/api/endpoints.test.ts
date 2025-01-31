@@ -3,13 +3,14 @@ import '@testing-library/jest-dom';
 import { describe, test, expect, beforeAll } from '@jest/globals';
 
 describe('API Endpoint Tests', () => {
-    const baseURL = 'http://server:8000';
+    const baseURL = 'http://localhost:8000';
     let authToken: string;
 
     beforeAll(() => {
         // Configure axios defaults
         axios.defaults.baseURL = baseURL;
         axios.defaults.headers.common['Content-Type'] = 'application/json';
+        axios.defaults.withCredentials = true;
     });
 
     describe('Authentication Endpoints', () => {

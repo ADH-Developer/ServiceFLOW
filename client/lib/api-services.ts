@@ -111,6 +111,29 @@ export const customersApi = {
         }
     },
 
+    refreshToken: async () => {
+        try {
+            const refreshToken = localStorage.getItem('refreshToken');
+            if (!refreshToken) {
+                throw new Error('No refresh token available');
+            }
+
+            const response = await apiClient.post('/api/customers/token/refresh/', {
+                refresh: refreshToken
+            });
+
+            const newAccessToken = response.data.access;
+            localStorage.setItem('accessToken', newAccessToken);
+            return newAccessToken;
+        } catch (error: any) {
+            console.error('Token refresh error:', error.response?.data || error);
+            localStorage.removeItem('accessToken');
+            localStorage.removeItem('refreshToken');
+            localStorage.removeItem('userData');
+            throw error;
+        }
+    },
+
     logout: () => {
         localStorage.removeItem('accessToken');
         localStorage.removeItem('refreshToken');
@@ -120,7 +143,7 @@ export const customersApi = {
 
 export const workflowApi = {
     getBoardState: async () => {
-        const response = await apiClient.get('/workflow/board/');
+        const response = await apiClient.get('/api/customers/admin/workflow/');
         return {
             ...response.data,
             columns: Object.fromEntries(
@@ -133,8 +156,8 @@ export const workflowApi = {
     },
 
     moveCard: async (cardId: string | number, column: string, position: number) => {
-        const response = await apiClient.post(`/workflow/${cardId}/move/`, {
-            column,
+        const response = await apiClient.post(`/api/customers/admin/workflow/${cardId}/move_card/`, {
+            to_column: column,
             position
         });
         return transformApiToUiRequest(response.data);
@@ -146,7 +169,7 @@ export const workflowApi = {
     },
 
     addComment: async (cardId: string | number, text: string) => {
-        const response = await apiClient.post(`/workflow/${cardId}/comments/`, {
+        const response = await apiClient.post(`/api/customers/admin/workflow/${cardId}/comments/`, {
             text
         });
         return transformApiToUiComment(response.data);

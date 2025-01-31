@@ -1,20 +1,17 @@
 module.exports = {
-    preset: 'ts-jest',
-    testEnvironment: 'node',
+    testEnvironment: 'jsdom',
+    setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
     moduleNameMapper: {
-        '^@/(.*)$': '<rootDir>/$1'
+        '^@/(.*)$': '<rootDir>/$1',
     },
     transform: {
         '^.+\\.(ts|tsx)$': ['ts-jest', {
-            tsconfig: 'tsconfig.json',
-            useESM: true
+            tsconfig: '<rootDir>/tsconfig.json'
         }]
     },
-    setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
-    testMatch: ['**/*.test.ts', '**/*.test.tsx'],
-    testTimeout: 30000,
-    moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
-    testEnvironmentOptions: {
-        url: 'http://localhost:8000'
-    }
+    testMatch: [
+        '<rootDir>/tests/**/*.test.ts',
+        '<rootDir>/tests/**/*.test.tsx'
+    ],
+    moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node']
 }; 

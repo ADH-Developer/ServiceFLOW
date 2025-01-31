@@ -9,7 +9,7 @@ RUN apk add --no-cache --virtual .build-deps \
     python3 \
     make \
     g++ \
-    && npm install -g ts-node typescript jest ts-jest @types/jest
+    && npm install -g ts-node typescript jest ts-jest @types/jest @jest/globals @types/node-fetch
 
 # Create node user's home directory with correct permissions
 RUN mkdir -p /home/node/.npm && chown -R node:node /home/node
@@ -33,7 +33,7 @@ FROM node:18.19-alpine AS development
 
 # Install runtime tools and global packages
 RUN apk add --no-cache bash zsh git \
-    && npm install -g ts-node typescript jest ts-jest @types/jest
+    && npm install -g ts-node typescript jest ts-jest @types/jest @jest/globals @types/node-fetch
 
 # Create node user's home directory with correct permissions
 RUN mkdir -p /home/node/.npm && chown -R node:node /home/node
@@ -50,6 +50,9 @@ COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/.next ./.next
 COPY --from=builder --chown=node:node /app/package*.json ./
 COPY --from=builder --chown=node:node /app/tsconfig.json ./
+COPY --from=builder --chown=node:node /app/jest.config.js ./
+COPY --from=builder --chown=node:node /app/jest.setup.js ./
+COPY --from=builder --chown=node:node /app/jest.api.config.cjs ./
 COPY --from=builder --chown=node:node /app/public ./public
 COPY --from=builder --chown=node:node /app/components ./components
 COPY --from=builder --chown=node:node /app/lib ./lib
@@ -62,8 +65,6 @@ COPY --from=builder --chown=node:node /app/themes ./themes
 COPY --from=builder --chown=node:node /app/contexts ./contexts
 COPY --from=builder --chown=node:node /app/utils ./utils
 COPY --from=builder --chown=node:node /app/tests ./tests
-COPY --from=builder --chown=node:node /app/jest.config.js ./
-COPY --from=builder --chown=node:node /app/jest.setup.js ./
 
 # Set environment variables
 ENV NODE_ENV=development

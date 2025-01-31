@@ -233,14 +233,28 @@ class WorkflowConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def get_workflow_state(self):
         try:
-            # Get all service requests grouped by status
-            service_requests = ServiceRequest.objects.all()
+            # Get all service requests with their positions
+            service_requests = (
+                ServiceRequest.objects.all()
+                .select_related("customer__user", "vehicle")
+                .prefetch_related("services", "comments", "labels")
+            )
+
+            # Group them by workflow column
             columns = {}
-            for request in service_requests:
-                if request.status not in columns:
-                    columns[request.status] = []
-                columns[request.status].append(ServiceRequestSerializer(request).data)
-            return {"columns": columns}
+            for column, _ in ServiceRequest.WORKFLOW_COLUMN_CHOICES:
+                column_requests = service_requests.filter(
+                    workflow_column=column
+                ).order_by("workflow_position")
+
+                serializer = ServiceRequestSerializer(column_requests, many=True)
+                columns[column] = serializer.data
+
+            return {
+                "columns": columns,
+                "column_order": [c[0] for c in ServiceRequest.WORKFLOW_COLUMN_CHOICES],
+            }
+
         except Exception as e:
             logger.error(f"Error getting workflow state: {e}")
             logger.exception(e)

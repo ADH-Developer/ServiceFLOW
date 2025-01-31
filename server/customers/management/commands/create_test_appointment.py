@@ -1,8 +1,7 @@
-import asyncio
 import random
 from datetime import date, time, timedelta
 
-from asgiref.sync import sync_to_async
+from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from customers.models import CustomerProfile, ServiceItem, ServiceRequest, Vehicle
 from customers.serializers import ServiceRequestSerializer
@@ -29,15 +28,15 @@ class Command(BaseCommand):
             help="Date for the appointment",
         )
 
-    async def send_appointment_update(self, appointment):
+    def send_appointment_update(self, appointment):
         """Send WebSocket update for the new appointment"""
         try:
             channel_layer = get_channel_layer()
             serializer = ServiceRequestSerializer(appointment)
-            appointment_data = await sync_to_async(lambda: serializer.data)()
+            appointment_data = serializer.data
 
             # Send update to appointments group
-            await channel_layer.group_send(
+            async_to_sync(channel_layer.group_send)(
                 "appointments",
                 {
                     "type": "appointment_update",
@@ -45,6 +44,19 @@ class Command(BaseCommand):
                     "appointment": appointment_data,
                 },
             )
+
+            # Also send workflow board update
+            from customers.cache import WorkflowCache
+
+            board_state = WorkflowCache.get_board_state()
+            async_to_sync(channel_layer.group_send)(
+                "workflow",
+                {
+                    "type": "workflow_update",
+                    "data": board_state,
+                },
+            )
+
             self.stdout.write(
                 self.style.SUCCESS("Sent WebSocket update for new appointment")
             )
@@ -94,8 +106,8 @@ class Command(BaseCommand):
                 minute = random.choice([0, 15, 30, 45])
             appointment_time = time(hour, minute)
 
-            # Create appointment without sending WebSocket update
-            appointment = ServiceRequest(
+            # Create appointment
+            appointment = ServiceRequest.objects.create(
                 customer=customer,
                 vehicle=vehicle,
                 status=options["status"],
@@ -104,7 +116,6 @@ class Command(BaseCommand):
                 workflow_column="estimates",
                 workflow_position=0,
             )
-            appointment.save(skip_ws_update=True)  # Save with skip_ws_update flag
 
             # Create service item
             service_types = [
@@ -128,8 +139,8 @@ class Command(BaseCommand):
                 )
             )
 
-            # Send a single WebSocket update
-            asyncio.run(self.send_appointment_update(appointment))
+            # Send WebSocket update
+            self.send_appointment_update(appointment)
 
         except Exception as e:
             self.stdout.write(

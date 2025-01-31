@@ -304,6 +304,19 @@ class ServiceRequest(models.Model):
                         "appointment": appointment_data,
                     },
                 )
+
+                # Also send workflow board update
+                from .cache import WorkflowCache
+
+                board_state = WorkflowCache.get_board_state()
+                async_to_sync(channel_layer.group_send)(
+                    "workflow",
+                    {
+                        "type": "workflow_update",
+                        "data": board_state,
+                    },
+                )
+
         except Exception as e:
             logger.error(f"Error sending WebSocket update: {e}")
 

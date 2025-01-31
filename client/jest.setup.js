@@ -5,10 +5,16 @@ require('@testing-library/jest-dom');
 const localStorageMock = {
     getItem: jest.fn(),
     setItem: jest.fn(),
-    removeItem: jest.fn(),
     clear: jest.fn(),
+    removeItem: jest.fn(),
 };
 global.localStorage = localStorageMock;
+
+// Set up test environment variables
+process.env.NEXT_PUBLIC_API_URL = 'http://server:8000';
+
+// Add fetch polyfill for node environment
+global.fetch = require('node-fetch');
 
 // Mock WebSocket
 class WebSocketMock {

@@ -142,7 +142,9 @@ class WorkflowCache:
                 columns[column] = serializer.data
 
             # Cache the result
-            cache.set(cls.BOARD_KEY, columns, timeout=3600)  # 1 hour timeout
+            cache.set(
+                cls.BOARD_KEY, columns, timeout=60
+            )  # 1 minute timeout instead of 1 hour
             return columns
 
         except Exception as e:
@@ -154,9 +156,10 @@ class WorkflowCache:
     def move_card(cls, request_id: int, to_column: str, position: int) -> bool:
         """Move a card to a new position/column"""
         try:
-            # Instead of trying to update the cache directly,
-            # just invalidate it and let it rebuild on next access
+            # Immediately invalidate the cache
             cache.delete(cls.BOARD_KEY)
+            # Get fresh board state
+            board_state = cls._rebuild_board_state()
             return True
 
         except Exception as e:

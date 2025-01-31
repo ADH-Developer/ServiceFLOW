@@ -1,24 +1,31 @@
-/** @type {import('jest').Config} */
-const config = {
+module.exports = {
     preset: 'ts-jest',
-    testEnvironment: 'node',
-    testMatch: [
-        '<rootDir>/tests/api/**/*.test.ts',
+    testEnvironment: 'jsdom',
+    roots: ['<rootDir>/tests'],
+    setupFilesAfterEnv: [
+        '<rootDir>/tests/setup/jest.setup.ts',
+        '<rootDir>/tests/setup/api.ts',
+        '<rootDir>/tests/setup/websocket.ts'
     ],
-    setupFiles: ['<rootDir>/tests/setup/api.ts'],
     moduleNameMapper: {
-        '^@/(.*)$': '<rootDir>/$1',
+        '^@/(.*)$': '<rootDir>/src/$1'
+    },
+    testMatch: [
+        '**/tests/api/**/*.test.ts'
+    ],
+    globals: {
+        'ts-jest': {
+            tsconfig: 'tsconfig.json',
+            diagnostics: {
+                warnOnly: true
+            }
+        }
     },
     transform: {
         '^.+\\.tsx?$': ['ts-jest', {
-            tsconfig: 'tsconfig.test.json',
-            useESM: true
+            tsconfig: 'tsconfig.json'
         }]
     },
     moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
-    testEnvironmentOptions: {
-        url: 'http://localhost:8000'
-    }
-};
-
-module.exports = config; 
+    setupFiles: ['<rootDir>/tests/setup/jest.d.ts']
+}; 

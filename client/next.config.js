@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  swcMinify: true,
   experimental: {
     esmExternals: true
   },
@@ -13,7 +14,6 @@ const nextConfig = {
         module: false,
       };
     }
-
     return config;
   },
   // Rewrite API requests to the Django backend
@@ -26,8 +26,16 @@ const nextConfig = {
       {
         source: '/workflow/:path*',
         destination: 'http://server:8000/workflow/:path*'
+      },
+      {
+        source: '/login',
+        destination: 'http://server:8000/api/customers/login/'
       }
     ];
+  },
+  // TypeScript configuration
+  typescript: {
+    ignoreBuildErrors: false
   }
 };
 

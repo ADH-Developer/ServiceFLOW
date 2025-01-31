@@ -18,9 +18,12 @@ export const useWebSocket = ({ url, onMessage, fallbackPollInterval }: UseWebSoc
     useEffect(() => {
         isMounted.current = true;
         let heartbeatInterval: NodeJS.Timeout;
+        let reconnectTimer: NodeJS.Timeout;
 
         const connect = () => {
             try {
+                if (!isMounted.current) return;
+
                 if (connectionAttempts > 5) {
                     console.error('[WebSocket] Maximum reconnection attempts reached');
                     if (fallbackPollInterval) {
@@ -36,6 +39,12 @@ export const useWebSocket = ({ url, onMessage, fallbackPollInterval }: UseWebSoc
                     return;
                 }
 
+                // Clear any existing connection
+                if (ws.current) {
+                    ws.current.close();
+                    ws.current = null;
+                }
+
                 const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const wsHost = process.env.NODE_ENV === 'development' ? 'localhost:8000' : window.location.host;
                 const fullUrl = `${wsProtocol}//${wsHost}${url}?token=${encodeURIComponent(token)}`;
@@ -44,69 +53,59 @@ export const useWebSocket = ({ url, onMessage, fallbackPollInterval }: UseWebSoc
                 ws.current = new WebSocket(fullUrl);
 
                 ws.current.onopen = () => {
-                    if (isMounted.current) {
-                        console.log('[WebSocket] Connected successfully');
-                        setIsConnected(true);
-                        setConnectionAttempts(0);
-                        stopPolling(); // Stop polling if it was active
+                    if (!isMounted.current) return;
+                    console.log('[WebSocket] Connected successfully');
+                    setIsConnected(true);
+                    setConnectionAttempts(0);
 
-                        // Start heartbeat
-                        heartbeatInterval = setInterval(() => {
-                            if (ws.current?.readyState === WebSocket.OPEN) {
-                                ws.current.send(JSON.stringify({ type: 'ping' }));
-                            }
-                        }, 30000); // Send heartbeat every 30 seconds
-                    }
+                    // Start heartbeat only after successful connection
+                    heartbeatInterval = setInterval(() => {
+                        if (ws.current?.readyState === WebSocket.OPEN) {
+                            ws.current.send(JSON.stringify({ type: 'ping' }));
+                        }
+                    }, 30000);
                 };
 
                 ws.current.onclose = (event) => {
-                    if (isMounted.current) {
-                        console.log(`[WebSocket] Disconnected (code: ${event.code}, reason: ${event.reason})`);
-                        setIsConnected(false);
-                        clearInterval(heartbeatInterval);
+                    if (!isMounted.current) return;
+                    console.log(`[WebSocket] Disconnected (code: ${event.code}, reason: ${event.reason})`);
+                    setIsConnected(false);
+                    clearInterval(heartbeatInterval);
 
-                        // Try to reconnect after delay (increasing with each attempt)
-                        const delay = Math.min(1000 * Math.pow(2, connectionAttempts), 30000);
-                        reconnectTimeout.current = setTimeout(() => {
+                    // Only attempt reconnect if not unmounted and not a normal closure
+                    if (isMounted.current && event.code !== 1000) {
+                        const backoffDelay = Math.min(1000 * Math.pow(2, connectionAttempts), 10000);
+                        console.log(`[WebSocket] Reconnecting in ${backoffDelay}ms...`);
+                        reconnectTimer = setTimeout(() => {
                             if (isMounted.current) {
                                 setConnectionAttempts(prev => prev + 1);
                                 connect();
                             }
-                        }, delay);
-                    }
-                };
-
-                ws.current.onmessage = (event) => {
-                    if (isMounted.current) {
-                        try {
-                            const data = JSON.parse(event.data);
-                            if (data.type !== 'pong') {  // Don't log heartbeat responses
-                                console.log('[WebSocket] Received message:', {
-                                    type: data.type,
-                                    timestamp: new Date().toISOString(),
-                                    timeSinceLastMessage: Date.now() - lastMessageTime.current
-                                });
-                            }
-                            lastMessageTime.current = Date.now();
-                            onMessage(data);
-                        } catch (error) {
-                            console.error('[WebSocket] Error parsing message:', error);
-                            console.error('Raw message:', event.data);
-                        }
+                        }, backoffDelay);
                     }
                 };
 
                 ws.current.onerror = (error) => {
-                    if (isMounted.current) {
-                        console.error('[WebSocket] Error:', error);
-                        setIsConnected(false);
-                    }
+                    if (!isMounted.current) return;
+                    console.error('[WebSocket] Error:', error);
+                    // Let onclose handle reconnection
                 };
 
+                ws.current.onmessage = (event) => {
+                    if (!isMounted.current) return;
+                    try {
+                        const data = JSON.parse(event.data);
+                        console.log('[WebSocket] Received message:', data);
+                        lastMessageTime.current = Date.now();
+                        onMessage(data);
+                    } catch (error) {
+                        console.error('[WebSocket] Error parsing message:', error);
+                    }
+                };
             } catch (error) {
+                console.error('[WebSocket] Connection error:', error);
                 if (isMounted.current) {
-                    console.error('[WebSocket] Error creating connection:', error);
-                    setIsConnected(false);
+                    setConnectionAttempts(prev => prev + 1);
                 }
             }
         };
@@ -133,16 +132,17 @@ export const useWebSocket = ({ url, onMessage, fallbackPollInterval }: UseWebSoc
             console.log('[WebSocket] Cleaning up connection');
             isMounted.current = false;
             clearInterval(heartbeatInterval);
-            stopPolling();
-            if (reconnectTimeout.current) {
-                clearTimeout(reconnectTimeout.current);
-            }
+            clearTimeout(reconnectTimer);
             if (ws.current) {
-                ws.current.close();
+                ws.current.close(1000, 'Component unmounting');
                 ws.current = null;
             }
+            if (pollInterval.current) {
+                clearInterval(pollInterval.current);
+                pollInterval.current = undefined;
+            }
         };
-    }, [url, onMessage, connectionAttempts, fallbackPollInterval]);
+    }, [url, onMessage, fallbackPollInterval]);
 
     return {
         isConnected,
